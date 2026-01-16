@@ -1,11 +1,13 @@
 package com.github.jing332.tts_server_android.constant
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.github.jing332.tts_server_android.App
 import com.github.jing332.tts_server_android.BuildConfig
-import com.github.jing332.tts_server_android.app
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import java.util.Locale
@@ -15,10 +17,11 @@ import java.util.Locale
 object AppConst {
 
     val fileProviderAuthor = BuildConfig.APPLICATION_ID + ".fileprovider"
+    
+    // 显式使用 App.context 确保 Context 的一致性
     val localBroadcast by lazy { LocalBroadcastManager.getInstance(App.context) }
     val externalFilesDir by lazy { checkNotNull(App.context.getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
     val externalCacheDir by lazy { checkNotNull(App.context.externalCacheDir) { "externalCacheDir == null" } }
-
 
     var isSysTtsLogEnabled = true
     var isServerLogEnabled = false
@@ -30,7 +33,7 @@ object AppConst {
             ignoreUnknownKeys = true
             prettyPrint = true
             isLenient = true
-            explicitNulls = false //忽略为null的字段
+            explicitNulls = false 
             allowStructuredMapKeys = true
         }
     }
@@ -44,21 +47,27 @@ object AppConst {
     val localeCode: String
         get() = locale.run { "$language-$country" }
 
+    /**
+     * 修正点：显式指定 PackageInfo 类型
+     * 修正点：使用 App.context.packageName 替代不明确的全局引用
+     */
     val appInfo: AppInfo by lazy {
         val appInfo = AppInfo()
-        App.context.packageManager.getPackageInfo(
-            app.packageName,
-            PackageManager.GET_ACTIVITIES
-        )
-            ?.let {
-                appInfo.versionName = it.versionName ?: ""
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    appInfo.versionCode = it.longVersionCode
-                } else {
-                    @Suppress("DEPRECATION")
-                    appInfo.versionCode = it.versionCode.toLong()
-                }
+        val context = App.context
+        try {
+            val info: PackageInfo = context.packageManager.getPackageInfo(
+                context.packageName, 
+                PackageManager.GET_ACTIVITIES
+            )
+            appInfo.versionName = info.versionName ?: ""
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                appInfo.versionCode = info.longVersionCode
+            } else {
+                appInfo.versionCode = info.versionCode.toLong()
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         appInfo
     }
 
