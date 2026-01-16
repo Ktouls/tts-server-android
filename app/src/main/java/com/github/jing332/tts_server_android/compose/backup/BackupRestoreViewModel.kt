@@ -14,7 +14,8 @@ import com.github.jing332.tts_server_android.conf.AppConfig
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.thegrizzlylabs.sardineandroid.Sardine
 import com.thegrizzlylabs.sardineandroid.impl.OkHttpSardine
-import com.thegrizzlylabs.sardineandroid.model.DavResource
+// 修正：根据 library 常见路径去掉 .model 
+import com.thegrizzlylabs.sardineandroid.DavResource 
 import kotlinx.serialization.encodeToString
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -164,28 +165,32 @@ class BackupRestoreViewModel(application: Application) : AndroidViewModel(applic
         File(tmpZipPath + File.separator + name + ".json").writeText(s)
     }
 
-    // 👇👇👇 新增：WebDAV 和网络下载逻辑 👇👇👇
+    // ================== WebDAV 逻辑修复 ==================
 
     private fun getSardine(): Sardine {
         val sardine = OkHttpSardine()
+        // 使用 .value 获取持久化数据中的字符串
         sardine.setCredentials(AppConfig.webDavUser.value, AppConfig.webDavPass.value)
         return sardine
     }
 
     suspend fun testWebDav() = withIO {
         val sardine = getSardine()
+        // 尝试访问根路径以测试连接
         if (!sardine.exists(AppConfig.webDavUrl.value)) {
-            throw Exception("Connection failed or path does not exist")
+            throw Exception("连接失败：服务器地址不可访问")
         }
     }
 
+    // 显式指定返回类型 List<DavResource> 以修复类型推断报错
     suspend fun getWebDavBackupFiles(): List<DavResource> = withIO {
         val sardine = getSardine()
         val url = AppConfig.webDavUrl.value + AppConfig.webDavPath.value
         if (!sardine.exists(url)) {
             sardine.createDirectory(url)
-            return@withIO emptyList()
+            return@withIO emptyList<DavResource>()
         }
+        // 列表展示逻辑：排除目录并只显示 zip 备份
         sardine.list(url).filter { !it.isDirectory && it.name.endsWith(".zip") }
     }
 
@@ -193,25 +198,25 @@ class BackupRestoreViewModel(application: Application) : AndroidViewModel(applic
         val sardine = getSardine()
         val url = AppConfig.webDavUrl.value + AppConfig.webDavPath.value + "/" + fileName
         val stream = sardine.get(url)
-        stream.readBytes()
+        stream.use { it.readBytes() }
     }
 
     suspend fun downloadFromUrl(url: String): ByteArray = withIO {
         val client = OkHttpClient()
         val req = Request.Builder().url(url).build()
         val resp = client.newCall(req).execute()
-        if (!resp.isSuccessful) throw Exception("Download failed: code=${resp.code}")
-        resp.body?.bytes() ?: throw Exception("Body is empty")
+        if (!resp.isSuccessful) throw Exception("下载失败: HTTP ${resp.code}")
+        resp.body?.bytes() ?: throw Exception("返回体为空")
     }
 
-    // 👇👇👇 这是新增的上传方法，用于修复 BackupDialog.kt 的报错 👇👇👇
+    // 新增上传方法，供 BackupDialog.kt 调用
     suspend fun uploadToWebDav(bytes: ByteArray, fileName: String) = withIO {
         val sardine = getSardine()
         val dirUrl = AppConfig.webDavUrl.value + AppConfig.webDavPath.value
         if (!sardine.exists(dirUrl)) {
             sardine.createDirectory(dirUrl)
         }
-        val fileUrl = "$dirUrl/$fileName"
+        val fileUrl = if (dirUrl.endsWith("/")) "$dirUrl$fileName" else "$dirUrl/$fileName"
         sardine.put(fileUrl, bytes)
     }
 }
