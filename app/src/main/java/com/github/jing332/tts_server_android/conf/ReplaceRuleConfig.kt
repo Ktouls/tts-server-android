@@ -1,5 +1,6 @@
 package com.github.jing332.tts_server_android.conf
 
+import android.content.Context
 import com.funny.data_saver.core.DataSaverConverter
 import com.funny.data_saver.core.DataSaverMutableState
 import com.funny.data_saver.core.DataSaverPreferences
@@ -9,24 +10,10 @@ import com.github.jing332.tts_server_android.constant.AppConst
 import kotlinx.serialization.encodeToString
 
 object ReplaceRuleConfig {
-    private val pref = DataSaverPreferences(app.getSharedPreferences("replace_rule", 0))
+    private val pref by lazy { DataSaverPreferences((app as Context).getSharedPreferences("replace_rule", 0)) }
 
     val defaultSymbols: LinkedHashMap<String, String> = listOf(
-        "(",
-        ")",
-        "[",
-        "]",
-        "|",
-        "\\",
-        "/",
-        "{",
-        "}",
-        "^",
-        "$",
-        ".",
-        "*",
-        "+",
-        "?"
+        "(", ")", "[", "]", "|", "\\", "/", "{", "}", "^", "$", ".", "*", "+", "?"
     ).associateWith { it } as LinkedHashMap<String, String>
 
     init {
@@ -42,8 +29,10 @@ object ReplaceRuleConfig {
         )
     }
 
-    val symbols: DataSaverMutableState<LinkedHashMap<String, String>> = mutableDataSaverStateOf(
-        pref, key = "symbols",
-        defaultSymbols
-    )
+    val symbols: DataSaverMutableState<LinkedHashMap<String, String>> by lazy {
+        mutableDataSaverStateOf(
+            pref, key = "symbols",
+            defaultSymbols
+        )
+    }
 }
