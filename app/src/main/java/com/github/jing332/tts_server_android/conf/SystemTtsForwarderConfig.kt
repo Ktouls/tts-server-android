@@ -18,4 +18,11 @@ object SystemTtsForwarderConfig {
         key = "isWakeLockEnabled",
         initialValue = false
     )
+
+    // 👇👇👇 新增：是否自动启动 (记忆上次状态) 👇👇👇
+    val isAutoStart = mutableDataSaverStateOf(
+        dataSaverInterface = pref,
+        key = "isAutoStart",
+        initialValue = false
+    )
 }
