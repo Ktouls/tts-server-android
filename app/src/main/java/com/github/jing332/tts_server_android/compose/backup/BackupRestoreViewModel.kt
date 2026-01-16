@@ -203,4 +203,15 @@ class BackupRestoreViewModel(application: Application) : AndroidViewModel(applic
         if (!resp.isSuccessful) throw Exception("Download failed: code=${resp.code}")
         resp.body?.bytes() ?: throw Exception("Body is empty")
     }
+
+    // 👇👇👇 这是新增的上传方法，用于修复 BackupDialog.kt 的报错 👇👇👇
+    suspend fun uploadToWebDav(bytes: ByteArray, fileName: String) = withIO {
+        val sardine = getSardine()
+        val dirUrl = AppConfig.webDavUrl.value + AppConfig.webDavPath.value
+        if (!sardine.exists(dirUrl)) {
+            sardine.createDirectory(dirUrl)
+        }
+        val fileUrl = "$dirUrl/$fileName"
+        sardine.put(fileUrl, bytes)
+    }
 }
