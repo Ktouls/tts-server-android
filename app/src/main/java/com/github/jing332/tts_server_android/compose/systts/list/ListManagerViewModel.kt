@@ -25,14 +25,11 @@ class ListManagerViewModel : ViewModel() {
         const val TAG = "ListManagerViewModel"
     }
 
-    // 原始数据
-    private val _sourceList = MutableStateFlow<List<GroupWithSystemTts>>(emptyList())
-    
     // 搜索关键词
     private val _keyword = MutableStateFlow("")
     val keyword: StateFlow<String> get() = _keyword
 
-    // 对外暴露的列表（经过关键词过滤）
+    // 最终列表（经过搜索过滤）
     private val _list = MutableStateFlow<List<GroupWithSystemTts>>(emptyList())
     val list: StateFlow<List<GroupWithSystemTts>> get() = _list
 
@@ -40,19 +37,23 @@ class ListManagerViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             dbm.systemTtsV2.updateAllOrder()
             
-            // 合并数据库数据流和搜索关键词流
+            // 监听数据库变化和搜索词变化，合并生成最终列表
             dbm.systemTtsV2.flowAllGroupWithTts().conflate()
                 .combine(_keyword) { list, key ->
                     if (key.isBlank()) {
                         list
                     } else {
-                        // 执行过滤逻辑
+                        // 过滤逻辑：只要组内的 Item 名称包含关键词，就保留该 Item
                         list.mapNotNull { groupWithTts ->
                             val filteredItems = groupWithTts.list.filter { 
                                 it.displayName.contains(key, ignoreCase = true) 
                             }
                             if (filteredItems.isNotEmpty()) {
-                                groupWithTts.copy(list = filteredItems, group = groupWithTts.group.copy(isExpanded = true))
+                                // 如果组内有匹配项，强制展开该组，并只显示匹配项
+                                groupWithTts.copy(
+                                    list = filteredItems, 
+                                    group = groupWithTts.group.copy(isExpanded = true)
+                                )
                             } else {
                                 null
                             }
@@ -61,12 +62,12 @@ class ListManagerViewModel : ViewModel() {
                 }
                 .collect {
                     Log.d(TAG, "update list: ${it.size}")
-                    _sourceList.value = it // 实际上这里我们不需要保存sourceList了，因为combine已经处理了
                     _list.value = it
                 }
         }
     }
 
+    // 设置搜索关键词
     fun setSearchKeyword(key: String) {
         _keyword.value = key
     }
@@ -116,7 +117,7 @@ class ListManagerViewModel : ViewModel() {
     }
 
     fun reorder(from: ItemPosition, to: ItemPosition) {
-        // 如果正在搜索，禁止排序，防止数据错乱
+        // 安全保护：如果正在搜索，禁止后台执行排序逻辑
         if (_keyword.value.isNotEmpty()) return
 
         if (from.key is String && to.key is String) {
@@ -188,14 +189,6 @@ class ListManagerViewModel : ViewModel() {
     }
 
     private fun importDefaultListData(context: Context) {
-//        val json = context.assets.open("defaultData/list.json").readAllText()
-//        val list =
-//            AppConst.jsonBuilder.decodeFromString<List<GroupWithSystemTts>>(
-//                json
-//            )
-//        viewModelScope.launch(Dispatchers.IO) {
-//            dbm.systemTtsV2.insertGroupWithTts(*list.toTypedArray())
-//        }
+        // default data import logic
     }
-
 }
