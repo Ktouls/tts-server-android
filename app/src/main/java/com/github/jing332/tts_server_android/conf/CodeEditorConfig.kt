@@ -1,5 +1,6 @@
 package com.github.jing332.tts_server_android.conf
 
+import android.content.Context
 import com.funny.data_saver.core.DataSaverConverter.registerTypeConverters
 import com.funny.data_saver.core.DataSaverPreferences
 import com.funny.data_saver.core.mutableDataSaverStateOf
@@ -7,7 +8,7 @@ import com.github.jing332.tts_server_android.app
 import com.github.jing332.tts_server_android.constant.CodeEditorTheme
 
 object CodeEditorConfig {
-    private val pref = DataSaverPreferences(app.getSharedPreferences("code_editor", 0))
+    private val pref by lazy { DataSaverPreferences((app as Context).getSharedPreferences("code_editor", 0)) }
 
     init {
         registerTypeConverters(
@@ -18,9 +19,9 @@ object CodeEditorConfig {
         )
     }
 
-    val theme = mutableDataSaverStateOf(pref, "codeEditorTheme", CodeEditorTheme.AUTO)
+    val theme by lazy { mutableDataSaverStateOf(pref, "codeEditorTheme", CodeEditorTheme.AUTO) }
 
-    val isWordWrapEnabled = mutableDataSaverStateOf(pref, "isWordWrapEnabled", false)
-    val isRemoteSyncEnabled = mutableDataSaverStateOf(pref, "isRemoteSyncEnabled", false)
-    val remoteSyncPort = mutableDataSaverStateOf(pref, "remoteSyncPort", 4566)
+    val isWordWrapEnabled by lazy { mutableDataSaverStateOf(pref, "isWordWrapEnabled", false) }
+    val isRemoteSyncEnabled by lazy { mutableDataSaverStateOf(pref, "isRemoteSyncEnabled", false) }
+    val remoteSyncPort by lazy { mutableDataSaverStateOf(pref, "remoteSyncPort", 4566) }
 }
