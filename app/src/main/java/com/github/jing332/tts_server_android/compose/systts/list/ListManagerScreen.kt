@@ -1,5 +1,6 @@
 package com.github.jing332.tts_server_android.compose.systts.list
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -66,6 +67,7 @@ import com.github.jing332.tts_server_android.compose.systts.list.ui.widgets.Quic
 import com.github.jing332.tts_server_android.compose.systts.list.ui.widgets.TagDataClearConfirmDialog
 import com.github.jing332.tts_server_android.compose.systts.plugin.PluginSelectionDialog
 import com.github.jing332.tts_server_android.compose.systts.replace.SearchTextField
+import com.github.jing332.tts_server_android.compose.systts.replace.SearchType
 import com.github.jing332.tts_server_android.compose.systts.sizeToToggleableState
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SpeechTarget
@@ -89,6 +91,20 @@ internal fun ListManagerScreen(
     val navController = LocalNavController.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    val models by vm.list.collectAsStateWithLifecycle()
+    val searchKeyword by vm.keyword.collectAsStateWithLifecycle()
+    
+    // 搜索模式状态
+    var isSearchMode by rememberSaveable { mutableStateOf(false) }
+    // 搜索类型状态（为了适配SearchTextField组件参数，默认使用NAME）
+    var searchType by rememberSaveable { mutableStateOf(SearchType.NAME) }
+
+    // 1. 拦截返回键：如果正在搜索，则退出搜索模式并清空关键词
+    BackHandler(enabled = isSearchMode) {
+        isSearchMode = false
+        vm.setSearchKeyword("")
+    }
 
     var showSortDialog by remember { mutableStateOf<List<SystemTtsV2>?>(null) }
     if (showSortDialog != null) SortDialog(
@@ -210,10 +226,6 @@ internal fun ListManagerScreen(
             })
     }
 
-    val models by vm.list.collectAsStateWithLifecycle()
-    val searchKeyword by vm.keyword.collectAsStateWithLifecycle()
-    var isSearchMode by rememberSaveable { mutableStateOf(false) }
-    
     val listState = rememberLazyListState()
     LazyListIndexStateSaver(models = models, listState = listState)
 
@@ -275,11 +287,13 @@ internal fun ListManagerScreen(
                 scrollBehavior = scrollBehavior,
                 title = {
                     if (isSearchMode) {
+                        // 2. 集成 SearchTextField，并传入正确的 SearchType 参数
                         SearchTextField(
+                            modifier = Modifier.fillMaxSize(),
                             value = searchKeyword,
                             onValueChange = { vm.setSearchKeyword(it) },
-                            hint = stringResource(id = R.string.search),
-                            modifier = Modifier.fillMaxSize(),
+                            searchType = searchType,
+                            onSearchTypeChange = { searchType = it }
                         )
                     } else {
                         Text(stringResource(id = R.string.system_tts))
@@ -323,9 +337,14 @@ internal fun ListManagerScreen(
                             groupWithSystemTts.list.size
                         )
                     val key = "g_${g.id}"
+                    
+                    // 3. 动态控制拖拽修饰符：搜索时禁用拖拽
+                    val groupDragModifier = if (searchKeyword.isNotEmpty()) Modifier 
+                                            else Modifier.detectReorderAfterLongPress(reorderState)
+
                     stickyHeader(key = key) {
                         ShadowedDraggableItem(reorderableState = reorderState, key = key) {
-                            Group(modifier = Modifier.detectReorderAfterLongPress(reorderState),
+                            Group(modifier = groupDragModifier,
                                 name = g.name,
                                 isExpanded = g.isExpanded,
                                 toggleableState = checkState,
