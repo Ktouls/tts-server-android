@@ -2,15 +2,19 @@ package com.github.jing332.tts_server_android.compose.backup
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import com.drake.net.Net
 import com.drake.net.utils.withIO
-import com.github.jing332.tts_server_android.constant.AppConst
+import com.github.jing332.common.utils.FileUtils
+import com.github.jing332.common.utils.ZipUtils
 import com.github.jing332.database.dbm
 import com.github.jing332.database.entities.SpeechRule
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.replace.GroupWithReplaceRule
 import com.github.jing332.database.entities.systts.GroupWithSystemTts
-import com.github.jing332.common.utils.FileUtils
-import com.github.jing332.common.utils.ZipUtils
+import com.github.jing332.tts_server_android.conf.AppConfig
+import com.github.jing332.tts_server_android.constant.AppConst
+import com.thegrizzlylabs.sardineandroid.SardineFactory
+import com.thegrizzlylabs.sardineandroid.model.DavResource
 import kotlinx.serialization.encodeToString
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -37,10 +41,74 @@ class BackupRestoreViewModel(application: Application) : AndroidViewModel(applic
         restorePath + File.separator + "shared_prefs"
     }
 
+    // WebDAV 相关配置
+    private fun getSardine() = SardineFactory.begin(AppConfig.webDavUser.value, AppConfig.webDavPass.value)
+    private fun getWebDavUrl(path: String = ""): String {
+        val baseUrl = AppConfig.webDavUrl.value.trimEnd('/')
+        val targetPath = path.trimStart('/')
+        return "$baseUrl/$targetPath"
+    }
+
+    // 测试 WebDAV 连接
+    suspend fun testWebDav(): Boolean = withIO {
+        try {
+            getSardine().list(getWebDavUrl())
+            true
+        } catch (e: Exception) {
+            throw e
+        }
+    }
+
+    // 获取 WebDAV 备份文件列表
+    suspend fun getWebDavBackupFiles(): List<DavResource> = withIO {
+        val sardine = getSardine()
+        val path = AppConfig.webDavPath.value
+        val url = getWebDavUrl(path)
+
+        try {
+            if (!sardine.exists(url)) {
+                return@withIO emptyList()
+            }
+            sardine.list(url).filter {
+                !it.isDirectory && it.name.endsWith(".zip", ignoreCase = true)
+            }
+        } catch (e: Exception) {
+            throw e
+        }
+    }
+
+    // 从 WebDAV 下载文件
+    suspend fun downloadFromWebDav(fileName: String): ByteArray = withIO {
+        val sardine = getSardine()
+        val path = AppConfig.webDavPath.value
+        val url = getWebDavUrl("$path/$fileName")
+        sardine.get(url).readBytes()
+    }
+
+    // 上传到 WebDAV
+    suspend fun uploadToWebDav(data: ByteArray, fileName: String) = withIO {
+        val sardine = getSardine()
+        val path = AppConfig.webDavPath.value
+        val url = getWebDavUrl(path)
+        val fileUrl = getWebDavUrl("$path/$fileName")
+
+        if (!sardine.exists(url)) {
+            sardine.createDirectory(url)
+        }
+        sardine.put(fileUrl, data)
+    }
+
+    // 从 URL 下载直链文件
+    suspend fun downloadFromUrl(url: String): ByteArray = withIO {
+        Net.get(url).execute<ByteArray>()
+    }
 
     suspend fun restore(bytes: ByteArray): Boolean {
         var isRestart = false
         val outFileDir = File(restorePath)
+        outFileDir.deleteRecursively() // 先清理旧的
+        outFileDir.mkdirs()
+
         ZipUtils.unzipFile(ZipInputStream(ByteArrayInputStream(bytes)), outFileDir)
         if (outFileDir.exists()) {
             // shared_prefs
@@ -52,8 +120,11 @@ class BackupRestoreViewModel(application: Application) : AndroidViewModel(applic
             }
 
             // *.json
-            for (file in outFileDir.listFiles()!!) {
-                if (file.isFile) importFromJsonFile(file)
+            val files = outFileDir.listFiles()
+            if (files != null) {
+                for (file in files) {
+                    if (file.isFile) importFromJsonFile(file)
+                }
             }
         }
 
