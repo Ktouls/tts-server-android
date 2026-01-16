@@ -1,12 +1,13 @@
 package com.github.jing332.tts_server_android.constant
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.github.jing332.tts_server_android.BuildConfig
-import com.github.jing332.tts_server_android.app // 使用全局定义的 app
+import com.github.jing332.tts_server_android.app
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -17,10 +18,10 @@ import java.util.Locale
 object AppConst {
     val fileProviderAuthor = BuildConfig.APPLICATION_ID + ".fileprovider"
     
-    // 关键修正：显式指定类型（如 : LocalBroadcastManager），并改用全局 app
-    val localBroadcast: LocalBroadcastManager by lazy { LocalBroadcastManager.getInstance(app) }
-    val externalFilesDir: File by lazy { checkNotNull(app.getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
-    val externalCacheDir: File by lazy { checkNotNull(app.externalCacheDir) { "externalCacheDir == null" } }
+    // 关键修正：将 app 显式转换为 Context 强制编译器识别
+    val localBroadcast: LocalBroadcastManager by lazy { LocalBroadcastManager.getInstance(app as Context) }
+    val externalFilesDir: File by lazy { checkNotNull((app as Context).getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
+    val externalCacheDir: File by lazy { checkNotNull((app as Context).externalCacheDir) { "externalCacheDir == null" } }
 
     var isSysTtsLogEnabled = true
     var isServerLogEnabled = false
@@ -37,17 +38,17 @@ object AppConst {
     }
 
     val isCnLocale: Boolean
-        get() = app.resources.configuration.locale.language.endsWith("zh")
+        get() = (app as Context).resources.configuration.locale.language.endsWith("zh")
 
     val locale: Locale
-        get() = app.resources.configuration.locale
+        get() = (app as Context).resources.configuration.locale
 
     val appInfo: AppInfo by lazy {
         val appInfo = AppInfo()
+        val ctx = app as Context
         try {
-            // 显式指定 PackageInfo 类型，解决 Cannot infer type 报错
-            val info: PackageInfo = app.packageManager.getPackageInfo(
-                app.packageName, 
+            val info: PackageInfo = ctx.packageManager.getPackageInfo(
+                ctx.packageName, 
                 PackageManager.GET_ACTIVITIES
             )
             appInfo.versionName = info.versionName ?: ""
