@@ -1,6 +1,5 @@
 package com.github.jing332.tts_server_android.compose.backup
 
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -17,42 +16,37 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.github.jing332.tts_server_android.R
-import com.github.jing332.tts_server_android.app
-import com.github.jing332.tts_server_android.ui.AppActivityResultContracts
-import com.github.jing332.tts_server_android.ui.FilePickerActivity
-import com.github.jing332.tts_server_android.ui.view.AppDialogs.displayErrorDialog
-import com.github.jing332.common.utils.FileUtils.readBytes
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.LoadingContent
+import com.github.jing332.tts_server_android.R
+import com.github.jing332.tts_server_android.app
+import com.github.jing332.tts_server_android.ui.view.AppDialogs.displayErrorDialog
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun RestoreDialog(onDismissRequest: () -> Unit, vm: BackupRestoreViewModel = viewModel()) {
+internal fun RestoreDialog(
+    onDismissRequest: () -> Unit,
+    bytes: ByteArray, // 👈 必须接收字节数据
+    vm: BackupRestoreViewModel = viewModel()
+) {
     var isLoading by remember { mutableStateOf(true) }
     var needRestart by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val filePicker =
-        rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity())
-        {
-            if (it.second == null) {
-                onDismissRequest()
-                return@rememberLauncherForActivityResult
-            }
-            scope.launch {
-                runCatching {
-                    needRestart = vm.restore(it.second!!.readBytes(context))
-                    isLoading = false
-                }.onFailure {
-                    context.displayErrorDialog(it)
-                }
+
+    // 自动开始恢复
+    LaunchedEffect(Unit) {
+        scope.launch {
+            runCatching {
+                // 调用 ViewModel 的恢复逻辑
+                needRestart = vm.restore(bytes)
+                isLoading = false
+            }.onFailure {
+                context.displayErrorDialog(it)
+                onDismissRequest() // 失败直接关闭
             }
         }
-
-    LaunchedEffect(Unit) {
-        filePicker.launch(FilePickerActivity.RequestSelectFile(listOf("application/zip")))
     }
 
     AppDialog(
@@ -84,12 +78,13 @@ internal fun RestoreDialog(onDismissRequest: () -> Unit, vm: BackupRestoreViewMo
                     Text(stringResource(id = R.string.restart))
                 }
             } else {
-                TextButton(onClick = onDismissRequest) {
-                    Text(stringResource(id = R.string.confirm))
+                // 如果还在加载，禁止点击
+                if (!isLoading) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text(stringResource(id = R.string.confirm))
+                    }
                 }
             }
-
-
         }
     )
 }
