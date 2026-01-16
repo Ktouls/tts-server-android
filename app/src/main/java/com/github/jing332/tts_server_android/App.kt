@@ -43,9 +43,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         
-        // 🛠️ 关键修正：暂时注释掉 CrashHandler。
-        // 因为它的内部初始化触发了 Logback 的 XML 解析冲突。
-        // 注释掉它后，应用将不再因为日志库冲突而闪退。
+        // 🛠️ 拔掉引线：暂时关闭 CrashHandler，它会触发崩溃的日志初始化
         // CrashHandler(this) 
 
         SystemTtsV2.Converters.json = AppConst.jsonBuilder
