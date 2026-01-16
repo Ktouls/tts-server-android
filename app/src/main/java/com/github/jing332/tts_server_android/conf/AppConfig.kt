@@ -22,9 +22,7 @@ object AppConfig {
 
     init {
         registerTypeConverters<List<Pair<String, String>>>(
-            save = {
-                json.encodeToString(it)
-            },
+            save = { json.encodeToString(it) },
             restore = {
                 val list: List<Pair<String, String>> = try {
                     json.decodeFromString(it)
@@ -43,7 +41,11 @@ object AppConfig {
         )
     }
 
-    private val dataSaverPref = DataSaverPreferences(app.getSharedPreferences("app", 0))
+    /**
+     * 关键修复 1：使用 by lazy 延迟初始化。
+     * 只有在 App 真正运行起来并第一次访问配置项时，才会去调用 app 实例。
+     */
+    private val dataSaverPref by lazy { DataSaverPreferences(app.getSharedPreferences("app", 0)) }
 
     val theme = mutableDataSaverStateOf(
         dataSaverInterface = dataSaverPref,
@@ -87,10 +89,14 @@ object AppConfig {
         initialValue = true
     )
 
+    /**
+     * 关键修复 2：initialValue 绝对不能引用 app.getString(...)。
+     * 这里改用硬编码的字符串，确保类加载时不需要 Context。
+     */
     val testSampleText = mutableDataSaverStateOf(
         dataSaverInterface = dataSaverPref,
         key = "testSampleText",
-        initialValue = app.getString(R.string.systts_sample_test_text)
+        initialValue = "单击右侧按钮即可测试并播放这段音频。如果一切正常，你应该能听到清晰的声音。"
     )
 
     val fragmentIndex = mutableDataSaverStateOf(
@@ -117,7 +123,7 @@ object AppConfig {
         initialValue = 0
     )
 
-    // ================== 新增 WebDAV 配置 ==================
+    // ================== WebDAV 配置 ==================
     val webDavUrl = mutableDataSaverStateOf(
         dataSaverInterface = dataSaverPref,
         key = "webDavUrl",
