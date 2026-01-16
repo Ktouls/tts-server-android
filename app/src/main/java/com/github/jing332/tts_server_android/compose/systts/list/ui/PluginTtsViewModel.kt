@@ -8,7 +8,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope // 新增引用
+import androidx.lifecycle.viewModelScope
 import com.drake.net.utils.withIO
 import com.drake.net.utils.withMain
 import com.github.jing332.database.dbm
@@ -22,8 +22,8 @@ import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
 import com.github.jing332.tts_server_android.JsConsoleManager
 import com.github.jing332.tts_server_android.app
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.Dispatchers // 新增引用
-import kotlinx.coroutines.launch // 新增引用
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
@@ -31,13 +31,10 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     lateinit var engine: TtsPluginUiEngineV2
-
-    // ================== 新增开始: 插件列表相关 ==================
     val pluginList = mutableStateListOf<Plugin>()
 
     fun loadPluginList() {
         viewModelScope.launch(Dispatchers.IO) {
-            // 获取所有已启用的插件
             val plugins = dbm.pluginDao.allEnabled
             withMain {
                 pluginList.clear()
@@ -45,26 +42,23 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-    // ================== 新增结束 ==================
 
     @Suppress("UNCHECKED_CAST")
     fun service(): TextToSpeechProvider<TextToSpeechSource> {
-        return PluginTtsProvider(app, engine.plugin).also {
+        return PluginTtsProvider(app as Context, engine.plugin).also {
             it.engine = engine
         } as TextToSpeechProvider<TextToSpeechSource>
     }
 
     private fun initEngine(plugin: Plugin?, source: PluginTtsSource) {
-        // 修改: 只有当引擎已初始化 且 插件ID一致时，才直接返回。否则重新初始化。
         if (this::engine.isInitialized) {
             if (plugin == null && engine.plugin.pluginId == source.pluginId) return
             if (plugin != null && engine.plugin.pluginId == plugin.pluginId) return
         }
 
-        // compat preview plugin ui
         engine = if (plugin == null)
-            TtsPluginEngineManager.get(app, getPluginFromDB(source.pluginId))
-        else TtsPluginUiEngineV2(app, plugin).apply { eval() }
+            TtsPluginEngineManager.get(app as Context, getPluginFromDB(source.pluginId))
+        else TtsPluginUiEngineV2(app as Context, plugin).apply { eval() }
 
         engine.console = JsConsoleManager.ui
         engine.source = source
@@ -75,7 +69,6 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
             ?: throw IllegalStateException("Plugin $id not found from database")
 
     var isLoading by mutableStateOf(true)
-
     val locales = mutableStateListOf<Pair<String, String>>()
     val voices = mutableStateListOf<TtsPluginUiEngineV2.Voice>()
 
