@@ -70,8 +70,11 @@ fun LogScreen(
                 if (layoutInfo.totalItemsCount <= 0) {
                     true
                 } else {
-                    val lastVisibleItem = visibleItemsInfo.last()
-                    lastVisibleItem.index > layoutInfo.totalItemsCount - 5
+                    if (visibleItemsInfo.isEmpty()) true 
+                    else {
+                        val lastVisibleItem = visibleItemsInfo.last()
+                        lastVisibleItem.index > layoutInfo.totalItemsCount - 5
+                    }
                 }
             }
         }
