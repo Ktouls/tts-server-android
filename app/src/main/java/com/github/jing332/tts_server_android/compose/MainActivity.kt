@@ -9,6 +9,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Log // 👈 使用原生日志
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -49,8 +51,6 @@ import com.github.jing332.tts_server_android.service.systts.SystemTtsService
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
-import io.github.oshai.kotlinlogging.KotlinLogging
-
 
 val LocalNavController = compositionLocalOf<NavHostController> { error("No nav controller") }
 val LocalDrawerState = compositionLocalOf<DrawerState> { error("No drawer state") }
@@ -69,7 +69,7 @@ fun Context.asActivity(): Activity {
 class MainActivity : ComposeActivity() {
     companion object {
         private const val TAG = "MainActivity"
-        private val logger = KotlinLogging.logger(TAG)
+        // 👈 删除了 logger 定义，避免类加载时崩溃
     }
 
     @OptIn(ExperimentalPermissionsApi::class)
@@ -82,7 +82,8 @@ class MainActivity : ComposeActivity() {
                 var showAutoCheckUpdaterDialog by remember { mutableStateOf(false) }
                 val updateCheckTrigger = LocalUpdateCheckTrigger.current
                 if (showAutoCheckUpdaterDialog) {
-                    logger.info { "Check for update" }
+                    // 👈 改用原生 Log
+                    Log.i(TAG, "Check for update") 
                     AutoUpdateCheckerDialog(updateCheckTrigger.value, fromGithubAction = true) {
                         showAutoCheckUpdaterDialog = false
                         updateCheckTrigger.value = false
