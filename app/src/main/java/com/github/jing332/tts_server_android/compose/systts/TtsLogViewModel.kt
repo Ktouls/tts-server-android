@@ -1,5 +1,6 @@
 package com.github.jing332.tts_server_android.compose.systts
 
+import android.util.Log // 👈 使用原生 Log
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -10,7 +11,6 @@ import com.github.jing332.common.toLogLevel
 import com.github.jing332.common.utils.runOnUI
 import com.github.jing332.tts_server_android.SysttsLogger
 import com.github.jing332.tts_server_android.constant.AppConst
-import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
@@ -19,12 +19,10 @@ import java.io.FileWriter
 class TtsLogViewModel : ViewModel() {
     companion object {
         const val TAG = "TtsLogViewModel"
-
         const val MAX_SIZE = 150
-
-        private val logger = KotlinLogging.logger(TAG)
-        val file =
-            File(AppConst.externalFilesDir.absolutePath + File.separator + "log" + File.separator + "system_tts.log")
+        
+        // 👈 删除了 KotlinLogging
+        val file = File(AppConst.externalFilesDir.absolutePath + File.separator + "log" + File.separator + "system_tts.log")
     }
 
     val logs = mutableStateListOf<LogEntry>()
@@ -35,6 +33,7 @@ class TtsLogViewModel : ViewModel() {
             FileWriter(file, false).use { it.write(CharArray(0)) }
         }.onFailure {
             logs.add(LogEntry(level = LogLevel.ERROR, message = it.stackTraceToString()))
+            Log.e(TAG, "clear: ", it) // 👈 使用原生 Log
         }
     }
 
@@ -65,6 +64,7 @@ class TtsLogViewModel : ViewModel() {
                 })
             }
         } catch (e: Exception) {
+            Log.e(TAG, "init: ", e) // 👈 使用原生 Log
         }
     }
 
@@ -76,19 +76,23 @@ class TtsLogViewModel : ViewModel() {
             logs.add(logEntry)
 
         } catch (e: Exception) {
+            Log.e(TAG, "add: ", e) // 👈 使用原生 Log
         }
     }
 
     @Suppress("DEPRECATION")
     suspend fun pull() {
         runCatching {
-            file.readLines().takeLast(MAX_SIZE).apply {
-                withMain {
-                    forEach { add(it) }
+            if (file.exists()) {
+                file.readLines().takeLast(MAX_SIZE).apply {
+                    withMain {
+                        forEach { add(it) }
+                    }
                 }
             }
         }.onFailure {
             logs.add(LogEntry(level = LogLevel.ERROR, message = it.stackTraceToString()))
+            Log.e(TAG, "pull: ", it) // 👈 使用原生 Log
         }
 
     }
