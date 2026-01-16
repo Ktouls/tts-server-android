@@ -1,5 +1,6 @@
 package com.github.jing332.tts_server_android.compose.backup
 
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -23,10 +24,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.TextCheckBox
 import com.github.jing332.tts_server_android.R
+import com.github.jing332.tts_server_android.conf.AppConfig
 import com.github.jing332.tts_server_android.ui.AppActivityResultContracts
 import com.github.jing332.tts_server_android.ui.FilePickerActivity
 import com.github.jing332.tts_server_android.ui.view.AppDialogs.displayErrorDialog
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 internal fun BackupDialog(
@@ -41,6 +46,10 @@ internal fun BackupDialog(
     var isLoading by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    
+    // 是否上传到 WebDAV
+    var uploadToWebDav by remember { mutableStateOf(false) }
+    
     val checkedList = remember {
         mutableStateListOf(
             Type.Preference,
@@ -50,6 +59,7 @@ internal fun BackupDialog(
             Type.Plugin
         )
     }
+    
     AppDialog(onDismissRequest = onDismissRequest,
         title = { Text(stringResource(id = R.string.backup)) },
         content = {
@@ -78,6 +88,22 @@ internal fun BackupDialog(
                         horizontalArrangement = Arrangement.Start
                     )
                 }
+                
+                // 新增：WebDAV 勾选框
+                item {
+                    TextCheckBox(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = { Text("上传至 WebDAV") },
+                        checked = uploadToWebDav,
+                        onCheckedChange = { 
+                             if (it && AppConfig.webDavUrl.value.isBlank()) {
+                                 Toast.makeText(context, "请先在主界面配置 WebDAV", Toast.LENGTH_SHORT).show()
+                             } else {
+                                 uploadToWebDav = it 
+                             }
+                        }
+                    )
+                }
             }
         },
         buttons = {
@@ -90,13 +116,22 @@ internal fun BackupDialog(
                     scope.launch {
                         runCatching {
                             val data = vm.backup(checkedList)
-                            filePicker.launch(
-                                FilePickerActivity.RequestSaveFile(
-                                    fileName = "ttsrv-backup.zip",
-                                    fileMime = "application/zip",
-                                    fileBytes = data
+                            val fileName = "ttsrv-backup-" + SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date()) + ".zip"
+                            
+                            if (uploadToWebDav) {
+                                // 上传到 WebDAV
+                                vm.uploadToWebDav(data, fileName)
+                                Toast.makeText(context, "备份已上传到 WebDAV", Toast.LENGTH_LONG).show()
+                            } else {
+                                // 本地保存
+                                filePicker.launch(
+                                    FilePickerActivity.RequestSaveFile(
+                                        fileName = fileName,
+                                        fileMime = "application/zip",
+                                        fileBytes = data
+                                    )
                                 )
-                            )
+                            }
                         }.onFailure {
                             context.displayErrorDialog(it, context.getString(R.string.backup))
                         }
