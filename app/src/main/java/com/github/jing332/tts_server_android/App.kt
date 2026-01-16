@@ -15,6 +15,7 @@ import com.github.jing332.tts_server_android.service.forwarder.system.SysTtsForw
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.annotation.DelicateCoilApi
+import coil3.request.crossfade
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -33,6 +34,7 @@ class App : Application() {
     }
 
     override fun attachBaseContext(base: Context) {
+        // 确保 instance 在整个 App 运行的最开始就被赋值
         instance = this
         super.attachBaseContext(base.apply { AppLocale.setLocale(base) })
     }
@@ -46,6 +48,7 @@ class App : Application() {
         SystemTtsV2.Converters.json = AppConst.jsonBuilder
         AsyncCircleImageSettings.interceptor = AsyncImageInterceptor
 
+        // 配置图片加载器
         SingletonImageLoader.setUnsafe(
             ImageLoader
                 .Builder(context)
@@ -70,6 +73,7 @@ class App : Application() {
         val intent = packageManager.getLaunchIntentForPackage(packageName)!!
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         startActivity(intent)
+        // 杀掉进程以重启
         Process.killProcess(Process.myPid())
     }
 }
