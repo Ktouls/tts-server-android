@@ -14,6 +14,7 @@ import com.github.jing332.tts_server_android.conf.SystemTtsConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import org.burnoutcrew.reorderable.ItemPosition
@@ -24,20 +25,50 @@ class ListManagerViewModel : ViewModel() {
         const val TAG = "ListManagerViewModel"
     }
 
-    private val _list =
-        MutableStateFlow<List<GroupWithSystemTts>>(
-            emptyList()
-        )
+    // 原始数据
+    private val _sourceList = MutableStateFlow<List<GroupWithSystemTts>>(emptyList())
+    
+    // 搜索关键词
+    private val _keyword = MutableStateFlow("")
+    val keyword: StateFlow<String> get() = _keyword
+
+    // 对外暴露的列表（经过关键词过滤）
+    private val _list = MutableStateFlow<List<GroupWithSystemTts>>(emptyList())
     val list: StateFlow<List<GroupWithSystemTts>> get() = _list
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
             dbm.systemTtsV2.updateAllOrder()
-            dbm.systemTtsV2.flowAllGroupWithTts().conflate().collect {
-                Log.d(TAG, "update list: ${it.size}")
-                _list.tryEmit(it)
-            }
+            
+            // 合并数据库数据流和搜索关键词流
+            dbm.systemTtsV2.flowAllGroupWithTts().conflate()
+                .combine(_keyword) { list, key ->
+                    if (key.isBlank()) {
+                        list
+                    } else {
+                        // 执行过滤逻辑
+                        list.mapNotNull { groupWithTts ->
+                            val filteredItems = groupWithTts.list.filter { 
+                                it.displayName.contains(key, ignoreCase = true) 
+                            }
+                            if (filteredItems.isNotEmpty()) {
+                                groupWithTts.copy(list = filteredItems, group = groupWithTts.group.copy(isExpanded = true))
+                            } else {
+                                null
+                            }
+                        }
+                    }
+                }
+                .collect {
+                    Log.d(TAG, "update list: ${it.size}")
+                    _sourceList.value = it // 实际上这里我们不需要保存sourceList了，因为combine已经处理了
+                    _list.value = it
+                }
         }
+    }
+
+    fun setSearchKeyword(key: String) {
+        _keyword.value = key
     }
 
     fun updateTtsEnabled(
@@ -85,6 +116,9 @@ class ListManagerViewModel : ViewModel() {
     }
 
     fun reorder(from: ItemPosition, to: ItemPosition) {
+        // 如果正在搜索，禁止排序，防止数据错乱
+        if (_keyword.value.isNotEmpty()) return
+
         if (from.key is String && to.key is String) {
             val fromKey = from.key as String
             val toKey = to.key as String
