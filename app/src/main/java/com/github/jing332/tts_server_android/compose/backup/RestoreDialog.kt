@@ -26,25 +26,22 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun RestoreDialog(
     onDismissRequest: () -> Unit,
-    bytes: ByteArray, // 👈 必须接收字节数据
+    bytes: ByteArray, 
     vm: BackupRestoreViewModel = viewModel()
 ) {
     var isLoading by remember { mutableStateOf(true) }
     var needRestart by remember { mutableStateOf(false) }
-
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 自动开始恢复
     LaunchedEffect(Unit) {
         scope.launch {
             runCatching {
-                // 调用 ViewModel 的恢复逻辑
                 needRestart = vm.restore(bytes)
                 isLoading = false
             }.onFailure {
                 context.displayErrorDialog(it)
-                onDismissRequest() // 失败直接关闭
+                onDismissRequest() 
             }
         }
     }
@@ -54,32 +51,26 @@ internal fun RestoreDialog(
         title = { Text(stringResource(id = R.string.restore)) },
         content = {
             LoadingContent(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp),
+                Modifier.fillMaxWidth().padding(vertical = 16.dp),
                 isLoading = isLoading
             ) {
                 if (!isLoading)
-                    if (needRestart)
-                        Text(stringResource(id = R.string.restore_restart_msg))
-                    else
-                        Text(stringResource(id = R.string.restore_finished))
+                    if (needRestart) Text(stringResource(id = R.string.restore_restart_msg))
+                    else Text(stringResource(id = R.string.restore_finished))
             }
         },
         buttons = {
+            // 👈 统一按钮顺序：左取消，右操作
             if (needRestart) {
                 TextButton(onClick = onDismissRequest) {
                     Text(stringResource(id = R.string.cancel))
                 }
-
-                TextButton(onClick = {
-                    app.restart()
-                }) {
+                TextButton(onClick = { app.restart() }) {
                     Text(stringResource(id = R.string.restart))
                 }
             } else {
-                // 如果还在加载，禁止点击
                 if (!isLoading) {
+                    // 这里只有一个确定键，靠右放置
                     TextButton(onClick = onDismissRequest) {
                         Text(stringResource(id = R.string.confirm))
                     }
