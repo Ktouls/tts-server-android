@@ -2,6 +2,7 @@ package com.github.jing332.tts_server_android.compose.backup
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.format.Formatter // 新增：使用系统自带的格式化工具
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -40,7 +41,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.github.jing332.common.utils.FileUtils
 import com.github.jing332.common.utils.FileUtils.readBytes
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.LoadingDialog
@@ -52,7 +52,8 @@ import com.github.jing332.tts_server_android.conf.AppConfig
 import com.github.jing332.tts_server_android.ui.AppActivityResultContracts
 import com.github.jing332.tts_server_android.ui.FilePickerActivity
 import com.github.jing332.tts_server_android.ui.view.AppDialogs.displayErrorDialog
-import com.thegrizzlylabs.sardineandroid.model.DavResource
+// 修正 Import 路径
+import com.thegrizzlylabs.sardineandroid.DavResource 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,12 +86,9 @@ class BackupRestoreActivity : ComposeActivity() {
                     BackupDialog(onDismissRequest = { showBackupDialog = false })
                 }
 
-                // 恢复菜单 (Bottom Sheet)
                 if (showRestoreMenu) {
                     ModalBottomSheet(onDismissRequest = { showRestoreMenu = false }) {
                         Column(Modifier.padding(bottom = 32.dp)) {
-                            // 1. 从本地文件恢复
-                            // 修正：回调参数 result 是 Pair<IRequestData?, Uri?>
                             val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) { result ->
                                 showRestoreMenu = false
                                 result?.second?.let { uri ->
@@ -98,13 +96,12 @@ class BackupRestoreActivity : ComposeActivity() {
                                 }
                             }
                             ListItem(
-                                // 修正：不能传 null，必须传具体的 Request 对象
+                                // 修正：传入空的 Request 对象而非 null
                                 modifier = Modifier.clickable { filePicker.launch(FilePickerActivity.RequestSelectFile()) },
                                 headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
                                 leadingContent = { Icon(Icons.Default.FolderOpen, null) }
                             )
 
-                            // 2. 从直链恢复
                             ListItem(
                                 modifier = Modifier.clickable {
                                     showRestoreMenu = false
@@ -114,7 +111,6 @@ class BackupRestoreActivity : ComposeActivity() {
                                 leadingContent = { Icon(Icons.Default.Link, null) }
                             )
 
-                            // 3. 从 WebDAV 恢复
                             val context = LocalContext.current
                             val notConfiguredStr = stringResource(R.string.config_webdav_first)
                             ListItem(
@@ -134,7 +130,6 @@ class BackupRestoreActivity : ComposeActivity() {
                     }
                 }
 
-                // URL 输入弹窗保持不变
                 if (showUrlInputDialog) {
                     var url by remember { mutableStateOf("") }
                     val scope = rememberCoroutineScope()
@@ -333,8 +328,8 @@ class BackupRestoreActivity : ComposeActivity() {
                                     }
                                 },
                                 headlineContent = { Text(item.name) },
-                                // 修正：FileUtils 的方法调用
-                                supportingContent = { Text(FileUtils.formatFileSize(item.contentLength)) },
+                                // 修正：使用 Formatter 确保文件大小格式化成功
+                                supportingContent = { Text(Formatter.formatFileSize(context, item.contentLength)) },
                                 leadingContent = { Icon(Icons.Default.Cloud, null) }
                             )
                         }
