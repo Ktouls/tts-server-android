@@ -25,11 +25,9 @@ class ListManagerViewModel : ViewModel() {
         const val TAG = "ListManagerViewModel"
     }
 
-    // 搜索关键词
     private val _keyword = MutableStateFlow("")
     val keyword: StateFlow<String> get() = _keyword
 
-    // 最终列表（经过搜索过滤）
     private val _list = MutableStateFlow<List<GroupWithSystemTts>>(emptyList())
     val list: StateFlow<List<GroupWithSystemTts>> get() = _list
 
@@ -37,19 +35,16 @@ class ListManagerViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             dbm.systemTtsV2.updateAllOrder()
             
-            // 监听数据库变化和搜索词变化，合并生成最终列表
             dbm.systemTtsV2.flowAllGroupWithTts().conflate()
                 .combine(_keyword) { list, key ->
                     if (key.isBlank()) {
                         list
                     } else {
-                        // 过滤逻辑：只要组内的 Item 名称包含关键词，就保留该 Item
                         list.mapNotNull { groupWithTts ->
                             val filteredItems = groupWithTts.list.filter { 
                                 it.displayName.contains(key, ignoreCase = true) 
                             }
                             if (filteredItems.isNotEmpty()) {
-                                // 如果组内有匹配项，强制展开该组，并只显示匹配项
                                 groupWithTts.copy(
                                     list = filteredItems, 
                                     group = groupWithTts.group.copy(isExpanded = true)
@@ -67,7 +62,6 @@ class ListManagerViewModel : ViewModel() {
         }
     }
 
-    // 设置搜索关键词
     fun setSearchKeyword(key: String) {
         _keyword.value = key
     }
@@ -117,7 +111,6 @@ class ListManagerViewModel : ViewModel() {
     }
 
     fun reorder(from: ItemPosition, to: ItemPosition) {
-        // 安全保护：如果正在搜索，禁止后台执行排序逻辑
         if (_keyword.value.isNotEmpty()) return
 
         if (from.key is String && to.key is String) {
@@ -183,12 +176,5 @@ class ListManagerViewModel : ViewModel() {
                 )
             )
         }
-
-        if (dbm.systemTtsV2.count == 0)
-            importDefaultListData(context)
-    }
-
-    private fun importDefaultListData(context: Context) {
-        // default data import logic
     }
 }
