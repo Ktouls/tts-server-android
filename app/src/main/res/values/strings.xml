@@ -505,4 +505,19 @@
     <string name="switch_tag">切换标签</string>
     <string name="get_tag_name_failed">获取标签名失败</string>
     <string name="text_processor_init_failed">文本处理器在初始化阶段出现错误，无法继续执行。可能的原因：开启多语音但未指定配置、朗读规则</string>
+    <string name="webdav_settings">WebDAV 设置</string>
+    <string name="restore_from_webdav">从 WebDAV 恢复</string>
+    <string name="backup_to_webdav">上传至 WebDAV</string>
+    <string name="server_address">服务器地址</string>
+    <string name="account">账号</string>
+    <string name="password">密码</string>
+    <string name="backup_folder">备份文件夹</string>
+    <string name="connection_success">连接成功</string>
+    <string name="config_webdav_first">请先配置 WebDAV</string>
+    <string name="backup_uploaded_success">备份已上传到 WebDAV</string>
+    <string name="select_cloud_backup">选择云端备份</string>
+    <string name="empty_folder">空文件夹</string>
+    <string name="save_and_test">保存并测试</string>
+    <string name="not_configured">未配置</string>
+    <string name="restore_from_url_net">从网络直链恢复</string>
 </resources>
