@@ -19,8 +19,11 @@ import coil3.request.crossfade
 import com.github.jing332.compose.widgets.AsyncCircleImageSettings
 import com.github.jing332.database.entities.systts.SystemTtsV2
 import com.github.jing332.tts_server_android.App.Companion.context
+import com.github.jing332.tts_server_android.conf.SystemTtsForwarderConfig
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.model.hanlp.HanlpManager
+import com.github.jing332.tts_server_android.service.forwarder.ForwarderServiceManager.switchSysTtsForwarder
+import com.github.jing332.tts_server_android.service.forwarder.system.SysTtsForwarderService
 import com.petterp.floatingx.FloatingX
 import com.petterp.floatingx.compose.enableComposeSupport
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -69,6 +72,12 @@ class App : Application() {
                 context.getExternalFilesDir("hanlp")?.absolutePath
                     ?: "/data/data/$packageName/files/hanlp"
             )
+
+            // 👇👇👇 新增：智能自启逻辑 👇👇👇
+            // 如果配置为“自动启动”且服务当前没运行，则启动它
+            if (SystemTtsForwarderConfig.isAutoStart.value && !SysTtsForwarderService.isRunning) {
+                switchSysTtsForwarder()
+            }
         }
     }
 
