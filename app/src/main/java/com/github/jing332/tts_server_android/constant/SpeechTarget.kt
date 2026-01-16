@@ -1,8 +1,8 @@
 package com.github.jing332.tts_server_android.constant
 
 import androidx.annotation.IntDef
+import com.github.jing332.tts_server_android.App // 确保导入了 App 类
 import com.github.jing332.tts_server_android.R
-import com.github.jing332.tts_server_android.app
 
 @IntDef(
     SpeechTarget.ALL,
@@ -28,7 +28,9 @@ annotation class SpeechTarget {
         fun toText(@SpeechTarget target: Int): String {
             return when (target) {
                 BGM -> {
-                    app.getString(R.string.bgm)
+                    // 修正：显式使用 App.context 调用 getString
+                    // 这样可以 100% 消除编译器对 Context 作用域的歧义
+                    App.context.getString(R.string.bgm)
                 }
 
                 else -> ""
