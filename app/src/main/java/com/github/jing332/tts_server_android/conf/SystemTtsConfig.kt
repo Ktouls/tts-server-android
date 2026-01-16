@@ -1,12 +1,13 @@
 package com.github.jing332.tts_server_android.conf
 
+import android.content.Context
 import com.funny.data_saver.core.DataSaverPreferences
 import com.funny.data_saver.core.mutableDataSaverStateOf
 import com.github.jing332.tts_server_android.app
 
 object SystemTtsConfig {
 
-    private val dataSaverPref = DataSaverPreferences(app.getSharedPreferences("systts", 0))
+    private val dataSaverPref by lazy { DataSaverPreferences((app as Context).getSharedPreferences("systts", 0)) }
 
     val isInternalPlayerEnabled = mutableDataSaverStateOf(
         dataSaverInterface = dataSaverPref,
@@ -151,5 +152,4 @@ object SystemTtsConfig {
         key = "isSilenceSkipAudio",
         initialValue = false
     )
-
 }
