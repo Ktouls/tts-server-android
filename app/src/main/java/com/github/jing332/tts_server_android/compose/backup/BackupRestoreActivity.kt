@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.setContent
+import androidx.activity.compose.setContent // 👈 修正：必须是 .compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -14,12 +14,12 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color // 👈 新增
+import androidx.compose.ui.graphics.Color 
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewModelScope // 👈 用于修复 CompositionCancellationException
 import com.github.jing332.common.utils.FileUtils.readBytes
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.LoadingDialog
@@ -42,7 +42,7 @@ class BackupRestoreActivity : ComposeActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
+        setContent { // 现在这里可以正确识别了
             AppTheme {
                 val vm: BackupRestoreViewModel = viewModel()
                 var showBackupDialog by remember { mutableStateOf(false) }
@@ -56,12 +56,12 @@ class BackupRestoreActivity : ComposeActivity() {
 
                 if (showBackupDialog) BackupDialog(onDismissRequest = { showBackupDialog = false })
 
+                // 恢复菜单改为 MD3 居中弹窗
                 if (showRestoreMenu) {
                     AlertDialog(
                         onDismissRequest = { showRestoreMenu = false },
                         title = { Text(stringResource(R.string.restore)) },
                         text = {
-                            // 👈 移除外部 padding，让列表铺满
                             Column(Modifier.fillMaxWidth()) {
                                 val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) { result ->
                                     showRestoreMenu = false
@@ -71,13 +71,13 @@ class BackupRestoreActivity : ComposeActivity() {
                                     modifier = Modifier.clickable { filePicker.launch(FilePickerActivity.RequestSelectFile()) },
                                     headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
                                     leadingContent = { Icon(Icons.Default.FolderOpen, null) },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                                 )
                                 ListItem(
                                     modifier = Modifier.clickable { showRestoreMenu = false; showUrlInputDialog = true },
                                     headlineContent = { Text(stringResource(R.string.restore_from_url_net)) },
                                     leadingContent = { Icon(Icons.Default.Link, null) },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                                 )
                                 val context = LocalContext.current
                                 ListItem(
@@ -90,7 +90,7 @@ class BackupRestoreActivity : ComposeActivity() {
                                     },
                                     headlineContent = { Text(stringResource(R.string.restore_from_webdav)) },
                                     leadingContent = { Icon(Icons.Default.CloudDownload, null) },
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                                 )
                             }
                         },
@@ -114,6 +114,7 @@ class BackupRestoreActivity : ComposeActivity() {
                                 if (url.isBlank()) return@TextButton
                                 showUrlInputDialog = false
                                 isLoading = true
+                                // 关键修复：使用 vm.viewModelScope 彻底解决 CompositionCancellationException
                                 vm.viewModelScope.launch {
                                     runCatching {
                                         val bytes = vm.downloadFromUrl(url)
@@ -238,7 +239,7 @@ class BackupRestoreActivity : ComposeActivity() {
             isLoading = false
         }
 
-        if (isLoading) { LoadingDialog(onDismissRequest = { /* 不能取消 */ }) } 
+        if (isLoading) { LoadingDialog(onDismissRequest = { }) } 
         else {
             AlertDialog(
                 onDismissRequest = onDismissRequest,
@@ -263,7 +264,7 @@ class BackupRestoreActivity : ComposeActivity() {
                                 headlineContent = { Text(item.name) },
                                 supportingContent = { Text(Formatter.formatFileSize(context, item.contentLength)) },
                                 leadingContent = { Icon(Icons.Default.Cloud, null) },
-                                colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                             )
                         }
                     }
