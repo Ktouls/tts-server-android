@@ -13,18 +13,14 @@ jobs:
   build:
     strategy:
       matrix:
-        product: [ { name: "App原版", value: app, lzyId: "9493563" }, { name: "Dev共存版", value: dev, lzyId: "7381570" } ]
-
+        product: [ { name: "App原版", value: app }, { name: "Dev共存版", value: dev } ]
       fail-fast: false
     runs-on: ubuntu-latest
     env:
       product: ${{ matrix.product.value }}
-      product_name: ${{ matrix.product.value }}
-      lzy_folder_id: ${{ matrix.product.lzyId }}
-      ylogin: ${{ secrets.LANZOU_ID }}
-      phpdisk_info: ${{ secrets.LANZOU_PSD }}
       outputs_dir: "${{ github.workspace }}/app/build/outputs"
-      ver_name: ""
+      # 👇 核心修复：限制 Gradle 使用最大 4GB 内存，防止 R8 混淆时撑爆服务器
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8"
 
     steps:
       - uses: actions/checkout@v4
@@ -42,12 +38,11 @@ jobs:
       - name: Init Signature
         run: |
           touch local.properties
-          echo ALIAS_NAME='${{ secrets.ALIAS_NAME }}' >> local.properties
-          echo ALIAS_PASSWORD='${{ secrets.ALIAS_PASSWORD }}' >> local.properties
-          echo KEY_PASSWORD='${{ secrets.KEY_PASSWORD }}' >> local.properties
-          echo KEY_PATH='./key.jks' >> local.properties
-          # 从Secrets读取无换行符Base64解码, 然后保存到到app/key.jks
-          echo ${{ secrets.KEY_STORE }} | base64 --decode > $GITHUB_WORKSPACE/app/key.jks
+          echo "ALIAS_NAME=${{ secrets.ALIAS_NAME }}" >> local.properties
+          echo "ALIAS_PASSWORD=${{ secrets.ALIAS_PASSWORD }}" >> local.properties
+          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> local.properties
+          echo "KEY_PATH=${{ github.workspace }}/app/key.jks" >> local.properties
+          echo "${{ secrets.KEY_STORE }}" | base64 --decode > ${{ github.workspace }}/app/key.jks
 
       - name: Build with Gradle
         run: |
@@ -57,31 +52,9 @@ jobs:
       - name: Set Version Name
         run: |
           echo "ver_name=$(grep -m 1 'versionName' ${{ env.outputs_dir }}/apk/${{ env.product }}/release/output-metadata.json | cut -d\" -f4)" >> $GITHUB_ENV
-          
-          #      - name: Set APK Path
-          #        run: |
-          #          echo "apk_path=${{ env.outputs_dir }}/apk/${{ env.product }}/release/${{ env.product }}-release.apk" >> $GITHUB_ENV    
-          
-          #            - name: Upload Mappings to Artifact
-          #              uses: actions/upload-artifact@v4
-          #              with:
-          #                name: mappings_${{ env.product }}_${{ env.ver_name }}
-          #                path: ${{ env.outputs_dir }}/mapping/*/*.txt
 
       - name: Upload APK To Artifact
         uses: actions/upload-artifact@v4
         with:
           name: "TTS-Server_${{ env.product }}_${{ env.ver_name }}"
-          path: ${{env.outputs_dir}}/apk/${{ env.product }}/release/*${{ env.ver_name }}.apk
-
-
-      - name: Upload APK To Lanzouyun
-        run: |
-          mkdir apk
-          cp ${{ env.outputs_dir }}/apk/${{ env.product }}/release/*${{ env.ver_name }}.apk "${{ github.workspace }}/apk"
-          path="${{ github.workspace }}/apk"
-          python3 ${{ github.workspace }}/.github/scripts/lzy_web.py $path "${{ env.lzy_folder_id }}"
-          
-#          echo "app: https://jing332.lanzn.com/b09jpjd2d"
-#          echo "dev: https://jing332.lanzn.com/b09ig9qla"
-#          echo "密码PWD: 1234"
+          path: ${{ env.outputs_dir }}/apk/${{ env.product }}/release/*.apk
