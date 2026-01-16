@@ -145,8 +145,10 @@ android {
 }
 
 dependencies {
-    // 👇👇👇 这一行是新加的，用于支持 WebDAV 功能 👇👇👇
+    // 👇👇👇 WebDAV 支持库 👇👇👇
     implementation 'com.thegrizzlylabs.sardine-android:sardine-android:0.8'
+    // 👇👇👇 扩展图标库 (解决找不到图标的问题) 👇👇👇
+    implementation 'androidx.compose.material:material-icons-extended'
 
     coreLibraryDesugaring(libs.desugar)
     api(project(":lib-common"))
