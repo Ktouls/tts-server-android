@@ -19,6 +19,8 @@ jobs:
     env:
       product: ${{ matrix.product.value }}
       outputs_dir: "${{ github.workspace }}/app/build/outputs"
+      # 👇 核心修复：限制 Gradle 使用最大 4GB 内存，防止 R8 混淆时撑爆服务器
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8"
 
     steps:
       - uses: actions/checkout@v4
