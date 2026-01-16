@@ -34,7 +34,6 @@ class App : Application() {
     }
 
     override fun attachBaseContext(base: Context) {
-        // 确保 instance 在整个 App 运行的最开始就被赋值
         instance = this
         super.attachBaseContext(base.apply { AppLocale.setLocale(base) })
     }
@@ -43,12 +42,15 @@ class App : Application() {
     @OptIn(DelicateCoroutinesApi::class, DelicateCoilApi::class)
     override fun onCreate() {
         super.onCreate()
-        CrashHandler(this)
+        
+        // 🛠️ 关键修正：暂时注释掉 CrashHandler。
+        // 因为它的内部初始化触发了 Logback 的 XML 解析冲突。
+        // 注释掉它后，应用将不再因为日志库冲突而闪退。
+        // CrashHandler(this) 
 
         SystemTtsV2.Converters.json = AppConst.jsonBuilder
         AsyncCircleImageSettings.interceptor = AsyncImageInterceptor
 
-        // 配置图片加载器
         SingletonImageLoader.setUnsafe(
             ImageLoader
                 .Builder(context)
@@ -73,7 +75,6 @@ class App : Application() {
         val intent = packageManager.getLaunchIntentForPackage(packageName)!!
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         startActivity(intent)
-        // 杀掉进程以重启
         Process.killProcess(Process.myPid())
     }
 }
