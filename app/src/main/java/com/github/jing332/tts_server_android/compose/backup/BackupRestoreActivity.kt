@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.github.jing332.common.utils.FileUtils
 import com.github.jing332.common.utils.FileUtils.readBytes
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.LoadingDialog
@@ -49,6 +50,7 @@ import com.github.jing332.tts_server_android.compose.settings.BasePreferenceWidg
 import com.github.jing332.tts_server_android.compose.theme.AppTheme
 import com.github.jing332.tts_server_android.conf.AppConfig
 import com.github.jing332.tts_server_android.ui.AppActivityResultContracts
+import com.github.jing332.tts_server_android.ui.FilePickerActivity
 import com.github.jing332.tts_server_android.ui.view.AppDialogs.displayErrorDialog
 import com.thegrizzlylabs.sardineandroid.model.DavResource
 import kotlinx.coroutines.Dispatchers
@@ -88,17 +90,16 @@ class BackupRestoreActivity : ComposeActivity() {
                     ModalBottomSheet(onDismissRequest = { showRestoreMenu = false }) {
                         Column(Modifier.padding(bottom = 32.dp)) {
                             // 1. 从本地文件恢复
-                            // 👇👇👇 修正：这里的 result 是 Pair<IRequestData?, Uri?> 👇👇👇
+                            // 修正：回调参数 result 是 Pair<IRequestData?, Uri?>
                             val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) { result ->
                                 showRestoreMenu = false
-                                // 如果返回的 Uri 不为空
                                 result?.second?.let { uri ->
-                                    // 直接读取 Uri 对应的字节流
                                     showFromFileRestoreDialog.value = uri.readBytes(this@BackupRestoreActivity)
                                 }
                             }
                             ListItem(
-                                modifier = Modifier.clickable { filePicker.launch(null) },
+                                // 修正：不能传 null，必须传具体的 Request 对象
+                                modifier = Modifier.clickable { filePicker.launch(FilePickerActivity.RequestSelectFile()) },
                                 headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
                                 leadingContent = { Icon(Icons.Default.FolderOpen, null) }
                             )
@@ -119,7 +120,6 @@ class BackupRestoreActivity : ComposeActivity() {
                             ListItem(
                                 modifier = Modifier.clickable {
                                     showRestoreMenu = false
-                                    // 检查配置
                                     if (AppConfig.webDavUrl.value.isBlank()) {
                                         Toast.makeText(context, notConfiguredStr, Toast.LENGTH_SHORT).show()
                                         showWebDavSettings = true
@@ -134,7 +134,7 @@ class BackupRestoreActivity : ComposeActivity() {
                     }
                 }
 
-                // URL 输入弹窗
+                // URL 输入弹窗保持不变
                 if (showUrlInputDialog) {
                     var url by remember { mutableStateOf("") }
                     val scope = rememberCoroutineScope()
@@ -169,26 +169,16 @@ class BackupRestoreActivity : ComposeActivity() {
                     )
                 }
 
-                // WebDAV 设置弹窗
                 if (showWebDavSettings) {
-                    WebDavSettingsDialog(
-                        onDismissRequest = { showWebDavSettings = false },
-                        vm = vm
-                    )
+                    WebDavSettingsDialog(onDismissRequest = { showWebDavSettings = false }, vm = vm)
                 }
 
-                // WebDAV 文件列表弹窗
                 if (showWebDavListDialog) {
-                    WebDavListDialog(
-                        onDismissRequest = { showWebDavListDialog = false },
-                        vm = vm,
-                        onFileSelected = { bytes ->
-                            showFromFileRestoreDialog.value = bytes
-                        }
-                    )
+                    WebDavListDialog(onDismissRequest = { showWebDavListDialog = false }, vm = vm) { bytes ->
+                        showFromFileRestoreDialog.value = bytes
+                    }
                 }
 
-                // 最终的恢复确认弹窗 (核心逻辑)
                 if (showFromFileRestoreDialog.value != null) {
                     RestoreDialog(
                         bytes = showFromFileRestoreDialog.value!!,
@@ -201,29 +191,21 @@ class BackupRestoreActivity : ComposeActivity() {
                         title = { Text(stringResource(id = R.string.backup_restore)) },
                         navigationIcon = {
                             IconButton(onClick = { finish() }) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.ArrowBack,
-                                    stringResource(id = R.string.nav_back)
-                                )
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(id = R.string.nav_back))
                             }
                         })
                 }) { padding ->
                     Column(Modifier.padding(padding)) {
-                        // 1. 备份按钮
                         BasePreferenceWidget(
                             onClick = { showBackupDialog = true },
                             title = { Text(stringResource(id = R.string.backup)) },
                             icon = { Icon(Icons.Default.Output, null) }
                         )
-
-                        // 2. 恢复按钮
                         BasePreferenceWidget(
                             onClick = { showRestoreMenu = true },
                             title = { Text(stringResource(id = R.string.restore)) },
                             icon = { Icon(Icons.AutoMirrored.Filled.Input, null) }
                         )
-
-                        // 3. WebDAV 设置入口
                         BasePreferenceWidget(
                             onClick = { showWebDavSettings = true },
                             title = { Text(stringResource(R.string.webdav_settings)) },
@@ -242,12 +224,11 @@ class BackupRestoreActivity : ComposeActivity() {
         restoreFromIntent(intent)
     }
 
-    // 👇👇👇 修正：这里的参数依旧接收系统传来的 Intent 👇👇👇
     private fun restoreFromIntent(intent: Intent?) {
         intent?.data?.let { uri ->
             showFromFileRestoreDialog.value = uri.readBytes(this)
         }
-        intent?.data = null // 处理完后清空 data 防止重复触发
+        intent?.data = null
     }
 
     @Composable
@@ -267,27 +248,19 @@ class BackupRestoreActivity : ComposeActivity() {
                 Column {
                     OutlinedTextField(
                         value = url, onValueChange = { url = it }, label = { Text(stringResource(R.string.server_address) + " (http(s)://...)") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     )
                     OutlinedTextField(
                         value = user, onValueChange = { user = it }, label = { Text(stringResource(R.string.account)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     )
                     OutlinedTextField(
                         value = pass, onValueChange = { pass = it }, label = { Text(stringResource(R.string.password)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     )
                     OutlinedTextField(
                         value = path, onValueChange = { path = it }, label = { Text(stringResource(R.string.backup_folder)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     )
                 }
             },
@@ -322,7 +295,6 @@ class BackupRestoreActivity : ComposeActivity() {
         val scope = rememberCoroutineScope()
         val context = LocalContext.current
 
-        // 加载列表
         androidx.compose.runtime.LaunchedEffect(Unit) {
             runCatching {
                 list = vm.getWebDavBackupFiles()
@@ -361,7 +333,8 @@ class BackupRestoreActivity : ComposeActivity() {
                                     }
                                 },
                                 headlineContent = { Text(item.name) },
-                                supportingContent = { Text(com.github.jing332.common.utils.FileUtils.formatFileSize(item.contentLength)) },
+                                // 修正：FileUtils 的方法调用
+                                supportingContent = { Text(FileUtils.formatFileSize(item.contentLength)) },
                                 leadingContent = { Icon(Icons.Default.Cloud, null) }
                             )
                         }
