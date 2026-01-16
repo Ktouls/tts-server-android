@@ -40,14 +40,10 @@ internal fun BackupDialog(
 ) {
     val filePicker =
         rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity())
-        {
-        }
+        {}
 
-    // var isLoading by remember { mutableStateOf(false) } // 虽然没用到，但保留也无妨，为了整洁我先注释掉
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    
-    // 是否上传到 WebDAV
     var uploadToWebDav by remember { mutableStateOf(false) }
     
     val checkedList = remember {
@@ -66,9 +62,7 @@ internal fun BackupDialog(
             LazyColumn(Modifier.fillMaxWidth()) {
                 items(Type.typeList) {
                     TextCheckBox(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.CenterStart),
+                        modifier = Modifier.fillMaxWidth(),
                         text = { Text(stringResource(id = it.nameStrId)) },
                         checked = checkedList.contains(it),
                         onCheckedChange = { check ->
@@ -76,20 +70,16 @@ internal fun BackupDialog(
                                 if (it == Type.PluginVars) {
                                     checkedList.contains(Type.Plugin) || checkedList.add(Type.Plugin)
                                 }
-
                                 checkedList.add(it)
                             } else {
-                                if (it == Type.Plugin) {
-                                    checkedList.remove(Type.PluginVars)
-                                }
+                                if (it == Type.Plugin) checkedList.remove(Type.PluginVars)
                                 checkedList.remove(it)
                             }
                         },
-                        horizontalArrangement = Arrangement.Start
+                        horizontalArrangement = Arrangement.Start // 👈 统一对齐
                     )
                 }
                 
-                // 新增：WebDAV 勾选框
                 item {
                     val configFirst = stringResource(R.string.config_webdav_first)
                     TextCheckBox(
@@ -102,45 +92,43 @@ internal fun BackupDialog(
                              } else {
                                  uploadToWebDav = it 
                              }
-                        }
+                        },
+                        horizontalArrangement = Arrangement.Start // 👈 修复排列不一致
                     )
                 }
             }
         },
         buttons = {
-            Row {
-                TextButton(onClick = onDismissRequest) {
-                    Text(stringResource(id = R.string.cancel))
-                }
+            // 👈 按钮顺序：取消在左，确定在右
+            TextButton(onClick = onDismissRequest) {
+                Text(stringResource(id = R.string.cancel))
+            }
 
-                TextButton(onClick = {
-                    scope.launch {
-                        runCatching {
-                            val data = vm.backup(checkedList)
-                            val fileName = "ttsrv-backup-" + SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date()) + ".zip"
-                            
-                            if (uploadToWebDav) {
-                                // 上传到 WebDAV
-                                vm.uploadToWebDav(data, fileName)
-                                Toast.makeText(context, context.getString(R.string.backup_uploaded_success), Toast.LENGTH_LONG).show()
-                            } else {
-                                // 本地保存
-                                filePicker.launch(
-                                    FilePickerActivity.RequestSaveFile(
-                                        fileName = fileName,
-                                        fileMime = "application/zip",
-                                        fileBytes = data
-                                    )
+            TextButton(onClick = {
+                scope.launch {
+                    runCatching {
+                        val data = vm.backup(checkedList)
+                        val fileName = "ttsrv-backup-" + SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(Date()) + ".zip"
+                        
+                        if (uploadToWebDav) {
+                            vm.uploadToWebDav(data, fileName)
+                            Toast.makeText(context, context.getString(R.string.backup_uploaded_success), Toast.LENGTH_LONG).show()
+                        } else {
+                            filePicker.launch(
+                                FilePickerActivity.RequestSaveFile(
+                                    fileName = fileName,
+                                    fileMime = "application/zip",
+                                    fileBytes = data
                                 )
-                            }
-                        }.onFailure {
-                            context.displayErrorDialog(it, context.getString(R.string.backup))
+                            )
                         }
-                        onDismissRequest()
+                    }.onFailure {
+                        context.displayErrorDialog(it, context.getString(R.string.backup))
                     }
-                }) {
-                    Text(stringResource(id = R.string.confirm))
+                    onDismissRequest()
                 }
+            }) {
+                Text(stringResource(id = R.string.confirm))
             }
         }
     )
