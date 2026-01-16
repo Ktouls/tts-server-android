@@ -145,10 +145,10 @@ android {
 }
 
 dependencies {
-    // 👇👇👇 WebDAV 支持库 (修改这里使用 libs.sardine) 👇👇👇
+    // WebDAV 支持库
     implementation(libs.sardine)
     
-    // 👇👇👇 扩展图标库 (解决找不到图标的问题) 👇👇👇
+    // 扩展图标库
     implementation 'androidx.compose.material:material-icons-extended'
 
     coreLibraryDesugaring(libs.desugar)
@@ -164,8 +164,12 @@ dependencies {
 
     implementation(libs.logging)
     implementation(libs.slf4j.api)
-//    implementation(libs.slf4j.simple)
-    implementation(libs.logback.android)
+    
+    // 🛠️ 关键修复 1：在 Logback 依赖中彻底排除引起冲突的 XML 库
+    implementation(libs.logback.android) {
+        exclude group: 'xmlpull', module: 'xmlpull'
+        exclude group: 'xpp3', module: 'xpp3'
+    }
 
     implementation libs.activityKtx
     implementation libs.bundles.andorid.base
@@ -206,7 +210,6 @@ dependencies {
     implementation(libs.bundles.lifecycle)
 
     def composeBom = platform(libs.compose.bom)
-//    def composeBom = platform("dev.chrisbanes.compose:compose-bom:2024.01.00-alpha01")
     implementation composeBom
     androidTestImplementation composeBom
 
@@ -218,10 +221,14 @@ dependencies {
     implementation 'androidx.compose.ui:ui-tooling-preview'
     debugImplementation 'androidx.compose.ui:ui-tooling'
 
-    // Logcat (Debug)
-//    debugImplementation 'com.github.getActivity:Logcat:11.2'
-
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
+}
+
+// 🛠️ 关键修复 2：添加全局排除规则
+// 确保没有任何间接依赖（如 sardine 或其他网络库）带入 xmlpull
+configurations.all {
+    exclude group: 'xmlpull', module: 'xmlpull'
+    exclude group: 'xpp3', module: 'xpp3'
 }
