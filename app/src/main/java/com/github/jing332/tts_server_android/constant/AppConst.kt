@@ -15,10 +15,8 @@ import java.util.Locale
 @SuppressLint("SimpleDateFormat")
 @Suppress("DEPRECATION")
 object AppConst {
-
     val fileProviderAuthor = BuildConfig.APPLICATION_ID + ".fileprovider"
     
-    // 显式使用 App.context 确保 Context 的一致性
     val localBroadcast by lazy { LocalBroadcastManager.getInstance(App.context) }
     val externalFilesDir by lazy { checkNotNull(App.context.getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
     val externalCacheDir by lazy { checkNotNull(App.context.externalCacheDir) { "externalCacheDir == null" } }
@@ -34,7 +32,6 @@ object AppConst {
             prettyPrint = true
             isLenient = true
             explicitNulls = false 
-            allowStructuredMapKeys = true
         }
     }
 
@@ -44,17 +41,11 @@ object AppConst {
     val locale: Locale
         get() = App.context.resources.configuration.locale
 
-    val localeCode: String
-        get() = locale.run { "$language-$country" }
-
-    /**
-     * 修正点：显式指定 PackageInfo 类型
-     * 修正点：使用 App.context.packageName 替代不明确的全局引用
-     */
     val appInfo: AppInfo by lazy {
         val appInfo = AppInfo()
         val context = App.context
         try {
+            // 显式使用 context 引用方法，防止编译器迷路
             val info: PackageInfo = context.packageManager.getPackageInfo(
                 context.packageName, 
                 PackageManager.GET_ACTIVITIES
