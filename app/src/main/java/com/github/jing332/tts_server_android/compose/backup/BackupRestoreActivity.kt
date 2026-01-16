@@ -88,13 +88,13 @@ class BackupRestoreActivity : ComposeActivity() {
                     ModalBottomSheet(onDismissRequest = { showRestoreMenu = false }) {
                         Column(Modifier.padding(bottom = 32.dp)) {
                             // 1. 从本地文件恢复
-                            val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) {
+                            // 👇👇👇 修正：这里的 result 是 Pair<IRequestData?, Uri?> 👇👇👇
+                            val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) { result ->
                                 showRestoreMenu = false
-                                if (it != null) {
-                                    val data = it.data
-                                    if (data != null) {
-                                        restoreFromIntent(it)
-                                    }
+                                // 如果返回的 Uri 不为空
+                                result?.second?.let { uri ->
+                                    // 直接读取 Uri 对应的字节流
+                                    showFromFileRestoreDialog.value = uri.readBytes(this@BackupRestoreActivity)
                                 }
                             }
                             ListItem(
@@ -242,11 +242,12 @@ class BackupRestoreActivity : ComposeActivity() {
         restoreFromIntent(intent)
     }
 
+    // 👇👇👇 修正：这里的参数依旧接收系统传来的 Intent 👇👇👇
     private fun restoreFromIntent(intent: Intent?) {
-        intent?.data?.let {
-            showFromFileRestoreDialog.value = it.readBytes(this)
-            intent.data = null
+        intent?.data?.let { uri ->
+            showFromFileRestoreDialog.value = uri.readBytes(this)
         }
+        intent?.data = null // 处理完后清空 data 防止重复触发
     }
 
     @Composable
