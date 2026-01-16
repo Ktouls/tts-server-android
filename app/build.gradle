@@ -145,6 +145,9 @@ android {
 }
 
 dependencies {
+    // 👇👇👇 这一行是新加的，用于支持 WebDAV 功能 👇👇👇
+    implementation 'com.thegrizzlylabs.sardine-android:sardine-android:0.8'
+
     coreLibraryDesugaring(libs.desugar)
     api(project(":lib-common"))
     implementation(project(":lib-compose"))
