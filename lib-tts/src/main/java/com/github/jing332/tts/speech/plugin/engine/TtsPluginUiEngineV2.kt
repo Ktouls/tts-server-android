@@ -1,21 +1,19 @@
 package com.github.jing332.tts.speech.plugin.engine
 
-import android.R.attr.country
 import android.content.Context
+import android.util.Log // 👈 使用原生 Log 替代 KotlinLogging
 import android.widget.LinearLayout
 import com.github.jing332.common.utils.dp
 import com.github.jing332.common.utils.toCountryFlagEmoji
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.script.toMap
-import io.github.oshai.kotlinlogging.KotlinLogging
 import org.mozilla.javascript.ScriptRuntime
 import org.mozilla.javascript.ScriptableObject
 import java.util.Locale
-import kotlin.to
 
 class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(context, plugin) {
     companion object {
-        private val logger = KotlinLogging.logger("TtsPluginUiEngineV2")
+        private const val TAG = "TtsPluginUiEngineV2"
 
         const val FUNC_SAMPLE_RATE = "getAudioSampleRate"
         const val FUNC_IS_NEED_DECODE = "isNeedDecode"
