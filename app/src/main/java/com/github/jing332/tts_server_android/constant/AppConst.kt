@@ -18,7 +18,6 @@ import java.util.Locale
 object AppConst {
     val fileProviderAuthor = BuildConfig.APPLICATION_ID + ".fileprovider"
     
-    // 关键修正：将 app 显式转换为 Context 强制编译器识别
     val localBroadcast: LocalBroadcastManager by lazy { LocalBroadcastManager.getInstance(app as Context) }
     val externalFilesDir: File by lazy { checkNotNull((app as Context).getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
     val externalCacheDir: File by lazy { checkNotNull((app as Context).externalCacheDir) { "externalCacheDir == null" } }
@@ -42,6 +41,9 @@ object AppConst {
 
     val locale: Locale
         get() = (app as Context).resources.configuration.locale
+
+    val localeCode: String
+        get() = locale.run { "$language-$country" }
 
     val appInfo: AppInfo by lazy {
         val appInfo = AppInfo()
