@@ -1,5 +1,6 @@
 package com.github.jing332.tts_server_android.compose.settings
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -161,7 +162,7 @@ fun SettingsScreen() {
                             langMenu = false
 
                             AppLocale.saveLocaleCodeToFile(context, languageKeys[index])
-                            AppLocale.setLocale(app)
+                            AppLocale.setLocale(app as Context)
                         }
                     )
                 }
@@ -245,7 +246,6 @@ fun SettingsScreen() {
 
             SysttsSettingsScreen()
             OtherSettingsScreen()
-
 
             Spacer(Modifier.navigationBarsPadding())
         }
