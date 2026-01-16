@@ -1,223 +1,375 @@
 package com.github.jing332.tts_server_android.compose.backup
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
-import com.drake.net.Net
-import com.drake.net.utils.withIO
-import com.github.jing332.common.utils.FileUtils
-import com.github.jing332.common.utils.ZipUtils
-import com.github.jing332.database.dbm
-import com.github.jing332.database.entities.SpeechRule
-import com.github.jing332.database.entities.plugin.Plugin
-import com.github.jing332.database.entities.replace.GroupWithReplaceRule
-import com.github.jing332.database.entities.systts.GroupWithSystemTts
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Input
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Output
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.github.jing332.common.utils.FileUtils.readBytes
+import com.github.jing332.compose.widgets.AppDialog
+import com.github.jing332.compose.widgets.LoadingDialog
+import com.github.jing332.tts_server_android.R
+import com.github.jing332.tts_server_android.compose.ComposeActivity
+import com.github.jing332.tts_server_android.compose.settings.BasePreferenceWidget
+import com.github.jing332.tts_server_android.compose.theme.AppTheme
 import com.github.jing332.tts_server_android.conf.AppConfig
-import com.github.jing332.tts_server_android.constant.AppConst
-import com.thegrizzlylabs.sardineandroid.SardineFactory
+import com.github.jing332.tts_server_android.ui.AppActivityResultContracts
+import com.github.jing332.tts_server_android.ui.view.AppDialogs.displayErrorDialog
 import com.thegrizzlylabs.sardineandroid.model.DavResource
-import kotlinx.serialization.encodeToString
-import java.io.ByteArrayInputStream
-import java.io.File
-import java.util.zip.ZipInputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class BackupRestoreViewModel(application: Application) : AndroidViewModel(application) {
-    // ... /cache/backupRestore
-    private val backupRestorePath by lazy {
-        application.externalCacheDir!!.absolutePath + File.separator + "backupRestore"
+class BackupRestoreActivity : ComposeActivity() {
+    companion object {
+        const val TAG = "BackupRestoreActivity"
     }
 
-    // /data/data/{package name}
-    private val internalDataFile by lazy {
-        application.filesDir!!.parentFile!!
-    }
+    private var showFromFileRestoreDialog = mutableStateOf<ByteArray?>(null)
 
-    // ... /cache/backupRestore/restore
-    private val restorePath by lazy {
-        backupRestorePath + File.separator + "restore"
-    }
+    @OptIn(ExperimentalMaterial3Api::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            AppTheme {
+                val vm: BackupRestoreViewModel = viewModel()
+                var showBackupDialog by remember { mutableStateOf(false) }
+                var showRestoreMenu by remember { mutableStateOf(false) }
+                var showWebDavSettings by remember { mutableStateOf(false) }
+                var showUrlInputDialog by remember { mutableStateOf(false) }
+                var showWebDavListDialog by remember { mutableStateOf(false) }
+                var isLoading by remember { mutableStateOf(false) }
 
-    // ... /cache/backupRestore/restore/shared_prefs
-    private val restorePrefsPath by lazy {
-        restorePath + File.separator + "shared_prefs"
-    }
+                if (isLoading) {
+                    LoadingDialog(onDismissRequest = { isLoading = false })
+                }
 
-    // WebDAV 相关配置
-    private fun getSardine() = SardineFactory.begin(AppConfig.webDavUser.value, AppConfig.webDavPass.value)
-    private fun getWebDavUrl(path: String = ""): String {
-        val baseUrl = AppConfig.webDavUrl.value.trimEnd('/')
-        val targetPath = path.trimStart('/')
-        return "$baseUrl/$targetPath"
-    }
+                if (showBackupDialog) {
+                    BackupDialog(onDismissRequest = { showBackupDialog = false })
+                }
 
-    // 测试 WebDAV 连接
-    suspend fun testWebDav(): Boolean = withIO {
-        try {
-            getSardine().list(getWebDavUrl())
-            true
-        } catch (e: Exception) {
-            throw e
-        }
-    }
+                // 恢复菜单 (Bottom Sheet)
+                if (showRestoreMenu) {
+                    ModalBottomSheet(onDismissRequest = { showRestoreMenu = false }) {
+                        Column(Modifier.padding(bottom = 32.dp)) {
+                            // 1. 从本地文件恢复
+                            val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) {
+                                showRestoreMenu = false
+                                if (it != null) {
+                                    val data = it.data
+                                    if (data != null) {
+                                        restoreFromIntent(it)
+                                    }
+                                }
+                            }
+                            ListItem(
+                                modifier = Modifier.clickable { filePicker.launch(null) },
+                                headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
+                                leadingContent = { Icon(Icons.Default.FolderOpen, null) }
+                            )
 
-    // 获取 WebDAV 备份文件列表
-    suspend fun getWebDavBackupFiles(): List<DavResource> = withIO {
-        val sardine = getSardine()
-        val path = AppConfig.webDavPath.value
-        val url = getWebDavUrl(path)
+                            // 2. 从直链恢复
+                            ListItem(
+                                modifier = Modifier.clickable {
+                                    showRestoreMenu = false
+                                    showUrlInputDialog = true
+                                },
+                                headlineContent = { Text(stringResource(R.string.restore_from_url_net)) },
+                                leadingContent = { Icon(Icons.Default.Link, null) }
+                            )
 
-        try {
-            if (!sardine.exists(url)) {
-                return@withIO emptyList()
-            }
-            sardine.list(url).filter {
-                !it.isDirectory && it.name.endsWith(".zip", ignoreCase = true)
-            }
-        } catch (e: Exception) {
-            throw e
-        }
-    }
+                            // 3. 从 WebDAV 恢复
+                            val context = LocalContext.current
+                            val notConfiguredStr = stringResource(R.string.config_webdav_first)
+                            ListItem(
+                                modifier = Modifier.clickable {
+                                    showRestoreMenu = false
+                                    // 检查配置
+                                    if (AppConfig.webDavUrl.value.isBlank()) {
+                                        Toast.makeText(context, notConfiguredStr, Toast.LENGTH_SHORT).show()
+                                        showWebDavSettings = true
+                                    } else {
+                                        showWebDavListDialog = true
+                                    }
+                                },
+                                headlineContent = { Text(stringResource(R.string.restore_from_webdav)) },
+                                leadingContent = { Icon(Icons.Default.CloudDownload, null) }
+                            )
+                        }
+                    }
+                }
 
-    // 从 WebDAV 下载文件
-    suspend fun downloadFromWebDav(fileName: String): ByteArray = withIO {
-        val sardine = getSardine()
-        val path = AppConfig.webDavPath.value
-        val url = getWebDavUrl("$path/$fileName")
-        sardine.get(url).readBytes()
-    }
+                // URL 输入弹窗
+                if (showUrlInputDialog) {
+                    var url by remember { mutableStateOf("") }
+                    val scope = rememberCoroutineScope()
+                    AppDialog(
+                        onDismissRequest = { showUrlInputDialog = false },
+                        title = { Text(stringResource(R.string.import_from_url)) },
+                        content = {
+                            OutlinedTextField(
+                                value = url,
+                                onValueChange = { url = it },
+                                label = { Text("URL") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        },
+                        buttons = {
+                            TextButton(onClick = {
+                                if (url.isBlank()) return@TextButton
+                                showUrlInputDialog = false
+                                isLoading = true
+                                scope.launch {
+                                    runCatching {
+                                        val bytes = vm.downloadFromUrl(url)
+                                        showFromFileRestoreDialog.value = bytes
+                                    }.onFailure {
+                                        displayErrorDialog(it)
+                                    }
+                                    isLoading = false
+                                }
+                            }) { Text(stringResource(R.string.confirm)) }
+                            TextButton(onClick = { showUrlInputDialog = false }) { Text(stringResource(R.string.cancel)) }
+                        }
+                    )
+                }
 
-    // 上传到 WebDAV
-    suspend fun uploadToWebDav(data: ByteArray, fileName: String) = withIO {
-        val sardine = getSardine()
-        val path = AppConfig.webDavPath.value
-        val url = getWebDavUrl(path)
-        val fileUrl = getWebDavUrl("$path/$fileName")
+                // WebDAV 设置弹窗
+                if (showWebDavSettings) {
+                    WebDavSettingsDialog(
+                        onDismissRequest = { showWebDavSettings = false },
+                        vm = vm
+                    )
+                }
 
-        if (!sardine.exists(url)) {
-            sardine.createDirectory(url)
-        }
-        sardine.put(fileUrl, data)
-    }
+                // WebDAV 文件列表弹窗
+                if (showWebDavListDialog) {
+                    WebDavListDialog(
+                        onDismissRequest = { showWebDavListDialog = false },
+                        vm = vm,
+                        onFileSelected = { bytes ->
+                            showFromFileRestoreDialog.value = bytes
+                        }
+                    )
+                }
 
-    // 从 URL 下载直链文件
-    suspend fun downloadFromUrl(url: String): ByteArray = withIO {
-        Net.get(url).execute<ByteArray>()
-    }
+                // 最终的恢复确认弹窗 (核心逻辑)
+                if (showFromFileRestoreDialog.value != null) {
+                    RestoreDialog(
+                        bytes = showFromFileRestoreDialog.value!!,
+                        onDismissRequest = { showFromFileRestoreDialog.value = null }
+                    )
+                }
 
-    suspend fun restore(bytes: ByteArray): Boolean {
-        var isRestart = false
-        val outFileDir = File(restorePath)
-        outFileDir.deleteRecursively() // 先清理旧的
-        outFileDir.mkdirs()
+                Scaffold(topBar = {
+                    TopAppBar(
+                        title = { Text(stringResource(id = R.string.backup_restore)) },
+                        navigationIcon = {
+                            IconButton(onClick = { finish() }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    stringResource(id = R.string.nav_back)
+                                )
+                            }
+                        })
+                }) { padding ->
+                    Column(Modifier.padding(padding)) {
+                        // 1. 备份按钮
+                        BasePreferenceWidget(
+                            onClick = { showBackupDialog = true },
+                            title = { Text(stringResource(id = R.string.backup)) },
+                            icon = { Icon(Icons.Default.Output, null) }
+                        )
 
-        ZipUtils.unzipFile(ZipInputStream(ByteArrayInputStream(bytes)), outFileDir)
-        if (outFileDir.exists()) {
-            // shared_prefs
-            val restorePrefsFile = File(restorePrefsPath)
-            if (restorePrefsFile.exists()) {
-                FileUtils.copyFolder(restorePrefsFile, internalDataFile)
-                restorePrefsFile.deleteRecursively()
-                isRestart = true
-            }
+                        // 2. 恢复按钮
+                        BasePreferenceWidget(
+                            onClick = { showRestoreMenu = true },
+                            title = { Text(stringResource(id = R.string.restore)) },
+                            icon = { Icon(Icons.AutoMirrored.Filled.Input, null) }
+                        )
 
-            // *.json
-            val files = outFileDir.listFiles()
-            if (files != null) {
-                for (file in files) {
-                    if (file.isFile) importFromJsonFile(file)
+                        // 3. WebDAV 设置入口
+                        BasePreferenceWidget(
+                            onClick = { showWebDavSettings = true },
+                            title = { Text(stringResource(R.string.webdav_settings)) },
+                            subTitle = { Text(if (AppConfig.webDavUrl.value.isBlank()) stringResource(R.string.not_configured) else AppConfig.webDavUrl.value) },
+                            icon = { Icon(Icons.Default.Settings, null) }
+                        )
+                    }
                 }
             }
         }
-
-        return isRestart
+        restoreFromIntent(intent)
     }
 
-    private fun importFromJsonFile(file: File) {
-        val jsonStr = file.readText()
-        if (file.name.endsWith("list.json")) {
-            val list: List<GroupWithSystemTts> = AppConst.jsonBuilder.decodeFromString(jsonStr)
-            dbm.systemTtsV2.insertGroupWithTts(*list.toTypedArray())
-        } else if (file.name.endsWith("speechRules.json")) {
-            val list: List<SpeechRule> = AppConst.jsonBuilder.decodeFromString(jsonStr)
-            dbm.speechRuleDao.insertOrUpdate(*list.toTypedArray())
-        } else if (file.name.endsWith("replaceRules.json")) {
-            val list: List<GroupWithReplaceRule> =
-                AppConst.jsonBuilder.decodeFromString(jsonStr)
-            dbm.replaceRuleDao.insertRuleWithGroup(*list.toTypedArray())
-        } else if (file.name.endsWith("plugins.json")) {
-            val list: List<Plugin> = AppConst.jsonBuilder.decodeFromString(jsonStr)
-            dbm.pluginDao.insertOrUpdate(*list.toTypedArray())
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        restoreFromIntent(intent)
+    }
+
+    private fun restoreFromIntent(intent: Intent?) {
+        intent?.data?.let {
+            showFromFileRestoreDialog.value = it.readBytes(this)
+            intent.data = null
         }
     }
 
-    suspend fun backup(_types: List<Type>): ByteArray = withIO {
-        File(tmpZipPath).deleteRecursively()
-        File(tmpZipPath).mkdirs()
+    @Composable
+    fun WebDavSettingsDialog(onDismissRequest: () -> Unit, vm: BackupRestoreViewModel) {
+        var url by remember { mutableStateOf(AppConfig.webDavUrl.value) }
+        var user by remember { mutableStateOf(AppConfig.webDavUser.value) }
+        var pass by remember { mutableStateOf(AppConfig.webDavPass.value) }
+        var path by remember { mutableStateOf(AppConfig.webDavPath.value) }
+        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+        val successStr = stringResource(R.string.connection_success)
 
-        val types = _types.toMutableList()
-        if (types.contains(Type.PluginVars)) types.remove(Type.Plugin)
-        types.forEach {
-            createConfigFile(it)
-        }
-
-        val zipFile = File(tmpZipFile)
-        ZipUtils.zipFolder(File(tmpZipPath), zipFile)
-        return@withIO zipFile.readBytes()
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        File(backupRestorePath).deleteRecursively()
-    }
-
-    // ... /cache/backupRestore/backup
-    private val tmpZipPath by lazy {
-        backupRestorePath + File.separator + "backup"
-    }
-
-    private val tmpZipFile by lazy {
-        backupRestorePath + File.separator + "backup.zip"
-    }
-
-    private fun createConfigFile(type: Type) {
-        when (type) {
-            is Type.Preference -> {
-                val folder = internalDataFile.absolutePath + File.separator + "shared_prefs"
-                FileUtils.copyFilesFromDir(
-                    File(folder),
-                    File(tmpZipPath + File.separator + "shared_prefs"),
-                )
-            }
-
-            is Type.List -> {
-                encodeJsonAndCopyToTmpZipPath(dbm.systemTtsV2.getAllGroupWithTts(), "list")
-            }
-
-            is Type.SpeechRule -> {
-                encodeJsonAndCopyToTmpZipPath(dbm.speechRuleDao.all, "speechRules")
-            }
-
-            is Type.ReplaceRule -> {
-                encodeJsonAndCopyToTmpZipPath(
-                    dbm.replaceRuleDao.allGroupWithReplaceRules(),
-                    "replaceRules"
-                )
-            }
-
-            is Type.IPlugin -> {
-                if (type.includeVars) {
-                    encodeJsonAndCopyToTmpZipPath(dbm.pluginDao.all, "plugins")
-                } else {
-                    encodeJsonAndCopyToTmpZipPath(dbm.pluginDao.all.map {
-                        it.userVars = mutableMapOf()
-                        it
-                    }, "plugins")
+        AppDialog(
+            onDismissRequest = onDismissRequest,
+            title = { Text(stringResource(R.string.webdav_settings)) },
+            content = {
+                Column {
+                    OutlinedTextField(
+                        value = url, onValueChange = { url = it }, label = { Text(stringResource(R.string.server_address) + " (http(s)://...)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    )
+                    OutlinedTextField(
+                        value = user, onValueChange = { user = it }, label = { Text(stringResource(R.string.account)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    )
+                    OutlinedTextField(
+                        value = pass, onValueChange = { pass = it }, label = { Text(stringResource(R.string.password)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    )
+                    OutlinedTextField(
+                        value = path, onValueChange = { path = it }, label = { Text(stringResource(R.string.backup_folder)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    )
                 }
+            },
+            buttons = {
+                TextButton(onClick = {
+                    AppConfig.webDavUrl.value = url
+                    AppConfig.webDavUser.value = user
+                    AppConfig.webDavPass.value = pass
+                    AppConfig.webDavPath.value = path
+                    
+                    scope.launch {
+                        runCatching {
+                            vm.testWebDav()
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, successStr, Toast.LENGTH_SHORT).show()
+                                onDismissRequest()
+                            }
+                        }.onFailure {
+                            context.displayErrorDialog(it)
+                        }
+                    }
+                }) { Text(stringResource(R.string.save_and_test)) }
+                TextButton(onClick = onDismissRequest) { Text(stringResource(R.string.cancel)) }
             }
-        }
+        )
     }
 
-    private inline fun <reified T> encodeJsonAndCopyToTmpZipPath(v: T, name: String) {
-        val s = AppConst.jsonBuilder.encodeToString(v)
-        File(tmpZipPath + File.separator + name + ".json").writeText(s)
+    @Composable
+    fun WebDavListDialog(onDismissRequest: () -> Unit, vm: BackupRestoreViewModel, onFileSelected: (ByteArray) -> Unit) {
+        var list by remember { mutableStateOf<List<DavResource>>(emptyList()) }
+        var isLoading by remember { mutableStateOf(true) }
+        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+
+        // 加载列表
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            runCatching {
+                list = vm.getWebDavBackupFiles()
+            }.onFailure {
+                context.displayErrorDialog(it)
+                onDismissRequest()
+            }
+            isLoading = false
+        }
+
+        if (isLoading) {
+            LoadingDialog(onDismissRequest = onDismissRequest)
+        } else {
+            AlertDialog(
+                onDismissRequest = onDismissRequest,
+                title = { Text(stringResource(R.string.select_cloud_backup)) },
+                text = {
+                    androidx.compose.foundation.lazy.LazyColumn {
+                        if (list.isEmpty()) {
+                            item { Text(stringResource(R.string.empty_folder)) }
+                        }
+                        items(list.size) { index ->
+                            val item = list[index]
+                            ListItem(
+                                modifier = Modifier.clickable {
+                                    scope.launch {
+                                        isLoading = true
+                                        runCatching {
+                                            val bytes = vm.downloadFromWebDav(item.name)
+                                            onFileSelected(bytes)
+                                            onDismissRequest()
+                                        }.onFailure {
+                                            context.displayErrorDialog(it)
+                                        }
+                                        isLoading = false
+                                    }
+                                },
+                                headlineContent = { Text(item.name) },
+                                supportingContent = { Text(com.github.jing332.common.utils.FileUtils.formatFileSize(item.contentLength)) },
+                                leadingContent = { Icon(Icons.Default.Cloud, null) }
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = onDismissRequest) { Text(stringResource(R.string.cancel)) }
+                }
+            )
+        }
     }
 }
