@@ -56,7 +56,7 @@ internal fun ColumnScope.OtherSettingsScreen() {
     )
 
 
-    var updateCheckTrigger = LocalUpdateCheckTrigger.current
+    val updateCheckTrigger = LocalUpdateCheckTrigger.current
     BasePreferenceWidget(
         onClick = { updateCheckTrigger.value = true },
         title = { Text(stringResource(R.string.check_update)) },
