@@ -3,11 +3,10 @@ package com.github.jing332.tts_server_android.compose.backup
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -24,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -37,7 +35,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -102,7 +99,7 @@ class BackupRestoreActivity : ComposeActivity() {
                             }
                             ListItem(
                                 modifier = Modifier.clickable { filePicker.launch(null) },
-                                headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) }, // 借用一下现有字符串
+                                headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
                                 leadingContent = { Icon(Icons.Default.FolderOpen, null) }
                             )
 
@@ -112,23 +109,25 @@ class BackupRestoreActivity : ComposeActivity() {
                                     showRestoreMenu = false
                                     showUrlInputDialog = true
                                 },
-                                headlineContent = { Text(stringResource(R.string.import_from_url)) },
+                                headlineContent = { Text(stringResource(R.string.restore_from_url_net)) },
                                 leadingContent = { Icon(Icons.Default.Link, null) }
                             )
 
                             // 3. 从 WebDAV 恢复
+                            val context = LocalContext.current
+                            val notConfiguredStr = stringResource(R.string.config_webdav_first)
                             ListItem(
                                 modifier = Modifier.clickable {
                                     showRestoreMenu = false
                                     // 检查配置
                                     if (AppConfig.webDavUrl.value.isBlank()) {
-                                        Toast.makeText(this@BackupRestoreActivity, "请先配置 WebDAV", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, notConfiguredStr, Toast.LENGTH_SHORT).show()
                                         showWebDavSettings = true
                                     } else {
                                         showWebDavListDialog = true
                                     }
                                 },
-                                headlineContent = { Text("从 WebDAV 恢复") },
+                                headlineContent = { Text(stringResource(R.string.restore_from_webdav)) },
                                 leadingContent = { Icon(Icons.Default.CloudDownload, null) }
                             )
                         }
@@ -227,8 +226,8 @@ class BackupRestoreActivity : ComposeActivity() {
                         // 3. WebDAV 设置入口
                         BasePreferenceWidget(
                             onClick = { showWebDavSettings = true },
-                            title = { Text("WebDAV 设置") },
-                            subTitle = { Text(if (AppConfig.webDavUrl.value.isBlank()) "未配置" else AppConfig.webDavUrl.value) },
+                            title = { Text(stringResource(R.string.webdav_settings)) },
+                            subTitle = { Text(if (AppConfig.webDavUrl.value.isBlank()) stringResource(R.string.not_configured) else AppConfig.webDavUrl.value) },
                             icon = { Icon(Icons.Default.Settings, null) }
                         )
                     }
@@ -258,27 +257,36 @@ class BackupRestoreActivity : ComposeActivity() {
         var path by remember { mutableStateOf(AppConfig.webDavPath.value) }
         val scope = rememberCoroutineScope()
         val context = LocalContext.current
+        val successStr = stringResource(R.string.connection_success)
 
         AppDialog(
             onDismissRequest = onDismissRequest,
-            title = { Text("WebDAV 设置") },
+            title = { Text(stringResource(R.string.webdav_settings)) },
             content = {
                 Column {
                     OutlinedTextField(
-                        value = url, onValueChange = { url = it }, label = { Text("服务器地址 (http(s)://...)") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        value = url, onValueChange = { url = it }, label = { Text(stringResource(R.string.server_address) + " (http(s)://...)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                     )
                     OutlinedTextField(
-                        value = user, onValueChange = { user = it }, label = { Text("账号") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        value = user, onValueChange = { user = it }, label = { Text(stringResource(R.string.account)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                     )
                     OutlinedTextField(
-                        value = pass, onValueChange = { pass = it }, label = { Text("密码") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        value = pass, onValueChange = { pass = it }, label = { Text(stringResource(R.string.password)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                     )
                     OutlinedTextField(
-                        value = path, onValueChange = { path = it }, label = { Text("备份文件夹 (例如: /TTS备份)") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        value = path, onValueChange = { path = it }, label = { Text(stringResource(R.string.backup_folder)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                     )
                 }
             },
@@ -288,19 +296,19 @@ class BackupRestoreActivity : ComposeActivity() {
                     AppConfig.webDavUser.value = user
                     AppConfig.webDavPass.value = pass
                     AppConfig.webDavPath.value = path
-                    
+
                     scope.launch {
                         runCatching {
                             vm.testWebDav()
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "连接成功", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, successStr, Toast.LENGTH_SHORT).show()
                                 onDismissRequest()
                             }
                         }.onFailure {
                             context.displayErrorDialog(it)
                         }
                     }
-                }) { Text("保存并测试") }
+                }) { Text(stringResource(R.string.save_and_test)) }
                 TextButton(onClick = onDismissRequest) { Text(stringResource(R.string.cancel)) }
             }
         )
@@ -329,11 +337,11 @@ class BackupRestoreActivity : ComposeActivity() {
         } else {
             AlertDialog(
                 onDismissRequest = onDismissRequest,
-                title = { Text("选择云端备份") },
+                title = { Text(stringResource(R.string.select_cloud_backup)) },
                 text = {
                     androidx.compose.foundation.lazy.LazyColumn {
                         if (list.isEmpty()) {
-                            item { Text("空文件夹") }
+                            item { Text(stringResource(R.string.empty_folder)) }
                         }
                         items(list.size) { index ->
                             val item = list[index]
