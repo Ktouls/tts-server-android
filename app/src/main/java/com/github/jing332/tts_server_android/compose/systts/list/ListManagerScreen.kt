@@ -2,13 +2,17 @@ package com.github.jing332.tts_server_android.compose.systts.list
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
@@ -16,7 +20,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -29,6 +35,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -66,10 +73,8 @@ import com.github.jing332.tts_server_android.compose.systts.list.ui.ItemDescript
 import com.github.jing332.tts_server_android.compose.systts.list.ui.widgets.QuickEditBottomSheet
 import com.github.jing332.tts_server_android.compose.systts.list.ui.widgets.TagDataClearConfirmDialog
 import com.github.jing332.tts_server_android.compose.systts.plugin.PluginSelectionDialog
-// 👇👇👇 补全了这两个缺失的 Import 👇👇👇
 import com.github.jing332.tts_server_android.compose.systts.replace.SearchTextField
 import com.github.jing332.tts_server_android.compose.systts.replace.SearchType
-// 👆👆👆 补全结束 👆👆👆
 import com.github.jing332.tts_server_android.compose.systts.sizeToToggleableState
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SpeechTarget
@@ -97,12 +102,9 @@ internal fun ListManagerScreen(
     val models by vm.list.collectAsStateWithLifecycle()
     val searchKeyword by vm.keyword.collectAsStateWithLifecycle()
     
-    // 搜索模式状态
     var isSearchMode by rememberSaveable { mutableStateOf(false) }
-    // 搜索类型状态（为了适配SearchTextField组件参数，默认使用NAME）
     var searchType by rememberSaveable { mutableStateOf(SearchType.NAME) }
 
-    // 1. 拦截返回键：如果正在搜索，则退出搜索模式并清空关键词
     BackHandler(enabled = isSearchMode) {
         isSearchMode = false
         vm.setSearchKeyword("")
@@ -130,7 +132,6 @@ internal fun ListManagerScreen(
         navController.navigate(NavRoutes.TtsEdit.id)
     }
 
-    // 长按Item拖拽提示
     var hasShownTip by rememberSaveable { mutableStateOf(false) }
 
     var showTagClearDialog by remember { mutableStateOf<SystemTtsV2?>(null) }
@@ -289,14 +290,22 @@ internal fun ListManagerScreen(
                 scrollBehavior = scrollBehavior,
                 title = {
                     if (isSearchMode) {
-                        // 2. 集成 SearchTextField，并传入正确的 SearchType 参数
-                        SearchTextField(
-                            modifier = Modifier.fillMaxSize(),
-                            value = searchKeyword,
-                            onValueChange = { vm.setSearchKeyword(it) },
-                            searchType = searchType,
-                            onSearchTypeChange = { searchType = it }
-                        )
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(CircleShape),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = CircleShape
+                        ) {
+                            SearchTextField(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                value = searchKeyword,
+                                onValueChange = { vm.setSearchKeyword(it) },
+                                searchType = searchType,
+                                onSearchTypeChange = { searchType = it }
+                            )
+                        }
                     } else {
                         Text(stringResource(id = R.string.system_tts))
                     }
@@ -340,7 +349,6 @@ internal fun ListManagerScreen(
                         )
                     val key = "g_${g.id}"
                     
-                    // 3. 动态控制拖拽修饰符：搜索时禁用拖拽
                     val groupDragModifier = if (searchKeyword.isNotEmpty()) Modifier 
                                             else Modifier.detectReorderAfterLongPress(reorderState)
 
