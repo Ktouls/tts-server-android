@@ -3,6 +3,7 @@
 package com.github.jing332.tts_server_android.service.forwarder.system
 
 import android.speech.tts.TextToSpeech
+import android.util.Log // 👈 改用原生 Log
 import com.github.jing332.database.entities.systts.AudioParams
 import com.github.jing332.database.entities.systts.source.LocalTtsParameter
 import com.github.jing332.server.forwarder.Engine
@@ -18,7 +19,6 @@ import com.github.jing332.tts_server_android.help.LocalTtsEngineHelper
 import com.github.jing332.tts_server_android.service.forwarder.AbsForwarderService
 import com.github.jing332.tts_server_android.service.systts.SystemTtsService
 import com.github.michaelbull.result.onFailure
-import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
 
 class SysTtsForwarderService(
@@ -41,9 +41,7 @@ class SysTtsForwarderService(
         const val ACTION_ON_STARTED = "ACTION_ON_STARTED"
         const val ACTION_ON_LOG = "ACTION_ON_LOG"
 
-        private val logger = KotlinLogging.logger(TAG)
-
-
+        // 👈 删除了 KotlinLogging，避免类加载时崩溃
         val isRunning: Boolean
             get() = instance?.isRunning == true
 
@@ -73,10 +71,10 @@ class SysTtsForwarderService(
                 val speed = (params.speed + 100) / 100f
                 val pitch = params.pitch / 100f
 
-                logger.debug { "android tts init: $params" }
+                Log.d(TAG, "android tts init: $params") // 👈 改用原生 Log.d
                 androidTts.init(params.engine)
 
-                logger.debug { "android tts get file..." }
+                Log.d(TAG, "android tts get file...") // 👈 改用原生 Log.d
                 val file = androidTts.getFile(
                     params.text,
                     params.locale,
