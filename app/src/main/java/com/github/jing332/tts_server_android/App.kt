@@ -1,37 +1,6 @@
 package com.github.jing332.tts_server_android
 
-import android.annotation.SuppressLint
-import android.app.Application
-import android.content.Context
-import android.content.Intent
-import android.os.Process
-import androidx.core.content.ContextCompat
-import androidx.core.content.ContextCompat.startActivity
-import androidx.core.graphics.drawable.toBitmap
-import coil3.ImageLoader
-import coil3.SingletonImageLoader
-import coil3.annotation.DelicateCoilApi
-import coil3.asImage
-import coil3.intercept.Interceptor
-import coil3.request.ImageResult
-import coil3.request.SuccessResult
-import coil3.request.crossfade
-import com.github.jing332.compose.widgets.AsyncCircleImageSettings
-import com.github.jing332.database.entities.systts.SystemTtsV2
-import com.github.jing332.tts_server_android.App.Companion.context
-import com.github.jing332.tts_server_android.conf.SystemTtsForwarderConfig
-import com.github.jing332.tts_server_android.constant.AppConst
-import com.github.jing332.tts_server_android.model.hanlp.HanlpManager
-import com.github.jing332.tts_server_android.service.forwarder.ForwarderServiceManager.switchSysTtsForwarder
-import com.github.jing332.tts_server_android.service.forwarder.system.SysTtsForwarderService
-import com.petterp.floatingx.FloatingX
-import com.petterp.floatingx.compose.enableComposeSupport
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlin.properties.Delegates
-import kotlin.text.lowercase
-
+// ... 其他 import 保持不变
 
 val app: App
     inline get() = App.instance
@@ -40,23 +9,29 @@ val app: App
 class App : Application() {
     companion object {
         const val TAG = "App"
-        var instance: App by Delegates.notNull()
+        // 关键点 1：移除 Delegates.notNull()，改为手动 lateinit
+        // 因为 Delegates.notNull 在早期访问时会直接抛出非法状态异常
+        lateinit var instance: App
+            private set
+
         val context: Context by lazy { instance }
     }
 
     override fun attachBaseContext(base: Context) {
+        // 关键点 2：必须在 super 之前赋值！
+        // 这样在 App 还没完全启动时，instance 就已经有值了
+        instance = this
         super.attachBaseContext(base.apply { AppLocale.setLocale(base) })
     }
 
     @SuppressLint("SdCardPath")
     @OptIn(DelicateCoroutinesApi::class, DelicateCoilApi::class)
     override fun onCreate() {
+        // 关键点 3：instance = this 可以留着，也可以删掉，因为上面已经赋过值了
         super.onCreate()
-        instance = this
         CrashHandler(this)
 
         SystemTtsV2.Converters.json = AppConst.jsonBuilder
-
         AsyncCircleImageSettings.interceptor = AsyncImageInterceptor
 
         SingletonImageLoader.setUnsafe(
@@ -66,15 +41,12 @@ class App : Application() {
                 .build()
         )
 
-
         GlobalScope.launch {
             HanlpManager.initDir(
                 context.getExternalFilesDir("hanlp")?.absolutePath
                     ?: "/data/data/$packageName/files/hanlp"
             )
 
-            // 👇👇👇 新增：智能自启逻辑 👇👇👇
-            // 如果配置为“自动启动”且服务当前没运行，则启动它
             if (SystemTtsForwarderConfig.isAutoStart.value && !SysTtsForwarderService.isRunning) {
                 switchSysTtsForwarder()
             }
@@ -84,9 +56,8 @@ class App : Application() {
     @SuppressLint("UnspecifiedImmutableFlag")
     fun restart() {
         val intent = packageManager.getLaunchIntentForPackage(packageName)!!
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        startActivity(intent);
-        //杀掉以前进程
-        Process.killProcess(Process.myPid());
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        startActivity(intent)
+        Process.killProcess(Process.myPid())
     }
 }
