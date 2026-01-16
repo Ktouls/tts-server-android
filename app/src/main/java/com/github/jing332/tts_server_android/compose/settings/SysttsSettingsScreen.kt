@@ -83,19 +83,6 @@ internal fun ColumnScope.SysttsSettingsScreen(modifier: Modifier = Modifier) {
         label = maxRetryValue,
     )
 
-//            var emptyAudioCount by remember { SystemTtsConfig.maxEmptyAudioRetryCount }
-//            val emptyAudioCountValue =
-//                if (emptyAudioCount == 0) stringResource(id = R.string.no_retries) else emptyAudioCount.toString()
-//            SliderPreference(
-//                title = { Text(stringResource(id = R.string.retry_count_when_audio_empty)) },
-//                subTitle = { Text(stringResource(id = R.string.retry_count_when_audio_empty_summary)) },
-//                value = emptyAudioCount.toFloat(),
-//                onValueChange = { emptyAudioCount = it.toInt() },
-//                valueRange = 0f..10f,
-//                icon = { Icon(Icons.Default.Audiotrack, null) },
-//                label = emptyAudioCountValue
-//            )
-
     var standbyTriggeredIndex by remember { SystemTtsConfig.standbyTriggeredRetryIndex }
     val standbyTriggeredIndexValue = standbyTriggeredIndex.toString()
     SliderPreference(
