@@ -1,6 +1,23 @@
 package com.github.jing332.tts_server_android
 
-// ... 其他 import 保持不变
+import android.annotation.SuppressLint
+import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.os.Process 
+import com.github.jing332.compose.widgets.AsyncCircleImageSettings
+import com.github.jing332.database.entities.systts.SystemTtsV2
+import com.github.jing332.tts_server_android.conf.SystemTtsForwarderConfig
+import com.github.jing332.tts_server_android.constant.AppConst
+import com.github.jing332.tts_server_android.model.hanlp.HanlpManager
+import com.github.jing332.tts_server_android.service.forwarder.ForwarderServiceManager.switchSysTtsForwarder
+import com.github.jing332.tts_server_android.service.forwarder.system.SysTtsForwarderService
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.annotation.DelicateCoilApi
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 val app: App
     inline get() = App.instance
@@ -9,8 +26,6 @@ val app: App
 class App : Application() {
     companion object {
         const val TAG = "App"
-        // 关键点 1：移除 Delegates.notNull()，改为手动 lateinit
-        // 因为 Delegates.notNull 在早期访问时会直接抛出非法状态异常
         lateinit var instance: App
             private set
 
@@ -18,8 +33,6 @@ class App : Application() {
     }
 
     override fun attachBaseContext(base: Context) {
-        // 关键点 2：必须在 super 之前赋值！
-        // 这样在 App 还没完全启动时，instance 就已经有值了
         instance = this
         super.attachBaseContext(base.apply { AppLocale.setLocale(base) })
     }
@@ -27,7 +40,6 @@ class App : Application() {
     @SuppressLint("SdCardPath")
     @OptIn(DelicateCoroutinesApi::class, DelicateCoilApi::class)
     override fun onCreate() {
-        // 关键点 3：instance = this 可以留着，也可以删掉，因为上面已经赋过值了
         super.onCreate()
         CrashHandler(this)
 
