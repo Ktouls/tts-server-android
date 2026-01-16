@@ -145,8 +145,9 @@ android {
 }
 
 dependencies {
-    // 👇👇👇 WebDAV 支持库 👇👇👇
-    implementation 'com.thegrizzlylabs.sardine-android:sardine-android:0.8'
+    // 👇👇👇 WebDAV 支持库 (修改这里使用 libs.sardine) 👇👇👇
+    implementation(libs.sardine)
+    
     // 👇👇👇 扩展图标库 (解决找不到图标的问题) 👇👇👇
     implementation 'androidx.compose.material:material-icons-extended'
 
