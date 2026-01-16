@@ -63,14 +63,10 @@ fun SystemTtsForwarderScreen(cfgVM: ConfigViewModel = viewModel()) {
                 actionOnStarted = SysTtsForwarderService.ACTION_ON_STARTED,
                 isRunning = isRunning,
                 onRunningChange = { isRunning = it },
-                // 👇👇👇 修改：点击开关时，同步记录状态到配置 👇👇👇
                 switch = {
-                    // 如果当前正在运行，说明这次点击是要关闭 (Next state: false)
-                    // 如果当前没运行，说明这次点击是要开启 (Next state: true)
                     SystemTtsForwarderConfig.isAutoStart.value = !SysTtsForwarderService.isRunning
                     context.switchSysTtsForwarder()
                 },
-                // 👆👆👆 修改结束 👆👆👆
                 port = port,
                 onPortChange = { port = it }
             )
