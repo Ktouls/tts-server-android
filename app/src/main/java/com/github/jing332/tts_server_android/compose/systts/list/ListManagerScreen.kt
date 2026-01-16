@@ -9,7 +9,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,6 +65,7 @@ import com.github.jing332.tts_server_android.compose.systts.list.ui.ItemDescript
 import com.github.jing332.tts_server_android.compose.systts.list.ui.widgets.QuickEditBottomSheet
 import com.github.jing332.tts_server_android.compose.systts.list.ui.widgets.TagDataClearConfirmDialog
 import com.github.jing332.tts_server_android.compose.systts.plugin.PluginSelectionDialog
+import com.github.jing332.tts_server_android.compose.systts.replace.SearchTextField
 import com.github.jing332.tts_server_android.compose.systts.sizeToToggleableState
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SpeechTarget
@@ -208,6 +211,9 @@ internal fun ListManagerScreen(
     }
 
     val models by vm.list.collectAsStateWithLifecycle()
+    val searchKeyword by vm.keyword.collectAsStateWithLifecycle()
+    var isSearchMode by rememberSaveable { mutableStateOf(false) }
+    
     val listState = rememberLazyListState()
     LazyListIndexStateSaver(models = models, listState = listState)
 
@@ -268,15 +274,36 @@ internal fun ListManagerScreen(
             NavTopAppBar(
                 scrollBehavior = scrollBehavior,
                 title = {
-                    Text(stringResource(id = R.string.system_tts))
-                }, actions = {
-                    IconButton(onClick = { showOptions = true }) {
-                        Icon(Icons.Default.MoreVert, stringResource(id = R.string.more_options))
-                        MenuMoreOptions(
-                            expanded = showOptions,
-                            onDismissRequest = { showOptions = false },
-                            onExportAll = { showGroupExportSheet = models },
+                    if (isSearchMode) {
+                        SearchTextField(
+                            value = searchKeyword,
+                            onValueChange = { vm.setSearchKeyword(it) },
+                            hint = stringResource(id = R.string.search),
+                            modifier = Modifier.fillMaxSize(),
                         )
+                    } else {
+                        Text(stringResource(id = R.string.system_tts))
+                    }
+                }, actions = {
+                    if (isSearchMode) {
+                        IconButton(onClick = { 
+                            isSearchMode = false 
+                            vm.setSearchKeyword("")
+                        }) {
+                            Icon(Icons.Default.Close, stringResource(id = R.string.close))
+                        }
+                    } else {
+                        IconButton(onClick = { isSearchMode = true }) {
+                            Icon(Icons.Default.Search, stringResource(id = R.string.search))
+                        }
+                        IconButton(onClick = { showOptions = true }) {
+                            Icon(Icons.Default.MoreVert, stringResource(id = R.string.more_options))
+                            MenuMoreOptions(
+                                expanded = showOptions,
+                                onDismissRequest = { showOptions = false },
+                                onExportAll = { showGroupExportSheet = models },
+                            )
+                        }
                     }
                 })
         },
