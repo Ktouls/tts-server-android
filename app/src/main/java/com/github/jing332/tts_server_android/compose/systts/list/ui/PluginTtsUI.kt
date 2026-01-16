@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect // 新增
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key // 新增
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,13 +47,13 @@ class PluginTtsUI : IConfigUI() {
         const val TAG = "PluginTtsUI"
     }
 
+    // ... ParamsEditScreen 保持不变 ...
     @Composable
     override fun ParamsEditScreen(
         modifier: Modifier,
         systemTts: SystemTtsV2,
         onSystemTtsChange: (SystemTtsV2) -> Unit,
     ) {
-
         val tts = (systemTts.config as TtsConfigurationDTO).source as PluginTtsSource
         Column(modifier) {
             val rateStr =
@@ -99,6 +101,7 @@ class PluginTtsUI : IConfigUI() {
         }
     }
 
+    // ... FullEditScreen 保持不变 ...
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun FullEditScreen(
@@ -136,6 +139,11 @@ class PluginTtsUI : IConfigUI() {
         val tts by rememberUpdatedState(newValue = (systts.config as TtsConfigurationDTO).source as PluginTtsSource)
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
+
+        // 1. 初始化时加载插件列表
+        LaunchedEffect(Unit) {
+            vm.loadPluginList()
+        }
 
         SaveActionHandler {
             val sampleRate = try {
@@ -212,83 +220,112 @@ class PluginTtsUI : IConfigUI() {
                     }
                 )
 
-                LoadingContent(isLoading = vm.isLoading) {
-                    Column {
-                        AppSpinner(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            labelText = stringResource(R.string.language),
-                            value = tts.locale,
-                            values = vm.locales.map { it.first },
-                            entries = vm.locales.map { it.second },
-                            onSelectedChange = { locale, _ ->
-                                Log.d("PluginTtsUI", "locale onSelectedChange: $locale")
-                                if (locale.toString().isBlank()) return@AppSpinner
-                                onSysttsChange(systts.copySource(tts.copy(locale = locale.toString())))
-                                runCatching {
-                                    scope.launch(Dispatchers.IO) {
-                                        vm.updateVoices(locale.toString())
-                                    }
-                                }
-                            },
+                // 2. 新增: 插件选择器
+                AppSpinner(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    labelText = stringResource(R.string.plugin), // 确保 R.string.plugin 存在，或者暂时用 "Plugin"
+                    value = tts.pluginId,
+                    values = vm.pluginList.map { it.pluginId },
+                    entries = vm.pluginList.map { it.name },
+                    onSelectedChange = { id, _ ->
+                        // 切换插件时，重置 locale 和 voice，触发重载
+                        onSysttsChange(
+                            systts.copy(
+                                config = (systts.config as TtsConfigurationDTO).copy(
+                                    source = tts.copy(
+                                        pluginId = id as String,
+                                        locale = "",
+                                        voice = ""
+                                    )
+                                )
+                            )
                         )
+                    }
+                )
 
-                        AppSpinner(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            labelText = stringResource(R.string.label_voice),
-                            value = tts.voice,
-                            values = vm.voices.map { it.id },
-                            entries = vm.voices.map { it.name },
-                            icons = vm.voices.map { it.icon },
-                            onSelectedChange = { voice, name ->
-                                val lastName = vm.voices.find { it.id == tts.voice }?.name ?: ""
-                                onSysttsChange(
-                                    systts.copy(
-                                        displayName =
-                                        if (systts.displayName.isNullOrBlank() || lastName == systts.displayName) name
-                                        else systts.displayName,
-                                        config = (systts.config as TtsConfigurationDTO).copy(
-                                            source = tts.copy(
-                                                voice = voice as String
+                // 3. 使用 key 包裹动态内容
+                // 当 tts.pluginId 变化时，强制销毁并重新创建内部组件，从而重新触发 vm.load
+                key(tts.pluginId) {
+                    LoadingContent(isLoading = vm.isLoading) {
+                        Column {
+                            AppSpinner(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                labelText = stringResource(R.string.language),
+                                value = tts.locale,
+                                values = vm.locales.map { it.first },
+                                entries = vm.locales.map { it.second },
+                                onSelectedChange = { locale, _ ->
+                                    Log.d("PluginTtsUI", "locale onSelectedChange: $locale")
+                                    if (locale.toString().isBlank()) return@AppSpinner
+                                    onSysttsChange(systts.copySource(tts.copy(locale = locale.toString())))
+                                    runCatching {
+                                        scope.launch(Dispatchers.IO) {
+                                            vm.updateVoices(locale.toString())
+                                        }
+                                    }
+                                },
+                            )
+
+                            AppSpinner(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                labelText = stringResource(R.string.label_voice),
+                                value = tts.voice,
+                                values = vm.voices.map { it.id },
+                                entries = vm.voices.map { it.name },
+                                icons = vm.voices.map { it.icon },
+                                onSelectedChange = { voice, name ->
+                                    val lastName = vm.voices.find { it.id == tts.voice }?.name ?: ""
+                                    onSysttsChange(
+                                        systts.copy(
+                                            displayName =
+                                            if (systts.displayName.isNullOrBlank() || lastName == systts.displayName) name
+                                            else systts.displayName,
+                                            config = (systts.config as TtsConfigurationDTO).copy(
+                                                source = tts.copy(
+                                                    voice = voice as String
+                                                )
                                             )
                                         )
                                     )
-                                )
 
+                                    runCatching {
+                                        vm.updateCustomUI(tts.locale, voice)
+                                    }.onFailure {
+                                        context.displayErrorDialog(it)
+                                    }
+
+                                    displayName = name
+                                }
+                            )
+
+                            val scope = rememberCoroutineScope()
+                            suspend fun load(linearLayout: LinearLayout) {
                                 runCatching {
-                                    vm.updateCustomUI(tts.locale, voice)
+                                    vm.load(context, plugin, tts, linearLayout)
                                 }.onFailure {
+                                    it.printStackTrace()
                                     context.displayErrorDialog(it)
                                 }
-
-                                displayName = name
                             }
-                        )
 
-                        val scope = rememberCoroutineScope()
-                        suspend fun load(linearLayout: LinearLayout) {
-                            runCatching {
-                                vm.load(context, plugin, tts, linearLayout)
-                            }.onFailure {
-                                it.printStackTrace()
-                                context.displayErrorDialog(it)
-                            }
-                        }
-
-                        AndroidView(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .animateContentSize(),
-                            factory = {
-                                LinearLayout(it).apply {
-                                    orientation = LinearLayout.VERTICAL
-                                    scope.launch { load(this@apply) }
+                            AndroidView(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateContentSize(),
+                                factory = {
+                                    LinearLayout(it).apply {
+                                        orientation = LinearLayout.VERTICAL
+                                        scope.launch { load(this@apply) }
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
