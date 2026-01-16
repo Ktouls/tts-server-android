@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.compose.setContent
+import androidx.activity.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -14,11 +14,12 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color // 👈 新增
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewModelScope // 👈 用于修复协程崩溃
+import androidx.lifecycle.viewModelScope
 import com.github.jing332.common.utils.FileUtils.readBytes
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.LoadingDialog
@@ -55,13 +56,13 @@ class BackupRestoreActivity : ComposeActivity() {
 
                 if (showBackupDialog) BackupDialog(onDismissRequest = { showBackupDialog = false })
 
-                // 👈 修复：将 BottomSheet 改为 AlertDialog 居中菜单
                 if (showRestoreMenu) {
                     AlertDialog(
                         onDismissRequest = { showRestoreMenu = false },
                         title = { Text(stringResource(R.string.restore)) },
                         text = {
-                            Column {
+                            // 👈 移除外部 padding，让列表铺满
+                            Column(Modifier.fillMaxWidth()) {
                                 val filePicker = rememberLauncherForActivityResult(contract = AppActivityResultContracts.filePickerActivity()) { result ->
                                     showRestoreMenu = false
                                     result?.second?.let { uri -> showFromFileRestoreDialog.value = uri.readBytes(this@BackupRestoreActivity) }
@@ -69,12 +70,14 @@ class BackupRestoreActivity : ComposeActivity() {
                                 ListItem(
                                     modifier = Modifier.clickable { filePicker.launch(FilePickerActivity.RequestSelectFile()) },
                                     headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
-                                    leadingContent = { Icon(Icons.Default.FolderOpen, null) }
+                                    leadingContent = { Icon(Icons.Default.FolderOpen, null) },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
                                 )
                                 ListItem(
                                     modifier = Modifier.clickable { showRestoreMenu = false; showUrlInputDialog = true },
                                     headlineContent = { Text(stringResource(R.string.restore_from_url_net)) },
-                                    leadingContent = { Icon(Icons.Default.Link, null) }
+                                    leadingContent = { Icon(Icons.Default.Link, null) },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
                                 )
                                 val context = LocalContext.current
                                 ListItem(
@@ -86,11 +89,14 @@ class BackupRestoreActivity : ComposeActivity() {
                                         } else { showWebDavListDialog = true }
                                     },
                                     headlineContent = { Text(stringResource(R.string.restore_from_webdav)) },
-                                    leadingContent = { Icon(Icons.Default.CloudDownload, null) }
+                                    leadingContent = { Icon(Icons.Default.CloudDownload, null) },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
                                 )
                             }
                         },
-                        confirmButton = { TextButton(onClick = { showRestoreMenu = false }) { Text(stringResource(R.string.cancel)) } }
+                        confirmButton = { 
+                            TextButton(onClick = { showRestoreMenu = false }) { Text(stringResource(R.string.cancel)) } 
+                        }
                     )
                 }
 
@@ -103,13 +109,11 @@ class BackupRestoreActivity : ComposeActivity() {
                             OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth())
                         },
                         buttons = {
-                            // 👈 按钮顺序：取消在左，确定在右
                             TextButton(onClick = { showUrlInputDialog = false }) { Text(stringResource(R.string.cancel)) }
                             TextButton(onClick = {
                                 if (url.isBlank()) return@TextButton
                                 showUrlInputDialog = false
                                 isLoading = true
-                                // 👈 关键修复：使用 viewModelScope 彻底避免 CompositionCancellationException
                                 vm.viewModelScope.launch {
                                     runCatching {
                                         val bytes = vm.downloadFromUrl(url)
@@ -183,7 +187,6 @@ class BackupRestoreActivity : ComposeActivity() {
             title = { Text(stringResource(R.string.webdav_settings)) },
             content = {
                 Column {
-                    // 👈 修复：更规范的标题标签
                     OutlinedTextField(
                         value = url, onValueChange = { url = it }, label = { Text("WebDAV 服务器地址") },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
@@ -203,7 +206,6 @@ class BackupRestoreActivity : ComposeActivity() {
                 }
             },
             buttons = {
-                // 👈 按钮顺序：左取消，右确定
                 TextButton(onClick = onDismissRequest) { Text(stringResource(R.string.cancel)) }
                 TextButton(onClick = {
                     AppConfig.webDavUrl.value = url
@@ -236,13 +238,13 @@ class BackupRestoreActivity : ComposeActivity() {
             isLoading = false
         }
 
-        if (isLoading) { LoadingDialog(onDismissRequest = onDismissRequest) } 
+        if (isLoading) { LoadingDialog(onDismissRequest = { /* 不能取消 */ }) } 
         else {
             AlertDialog(
                 onDismissRequest = onDismissRequest,
                 title = { Text(stringResource(R.string.select_cloud_backup)) },
                 text = {
-                    androidx.compose.foundation.lazy.LazyColumn {
+                    androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
                         if (list.isEmpty()) { item { Text(stringResource(R.string.empty_folder)) } }
                         items(list.size) { index ->
                             val item = list[index]
@@ -260,7 +262,8 @@ class BackupRestoreActivity : ComposeActivity() {
                                 },
                                 headlineContent = { Text(item.name) },
                                 supportingContent = { Text(Formatter.formatFileSize(context, item.contentLength)) },
-                                leadingContent = { Icon(Icons.Default.Cloud, null) }
+                                leadingContent = { Icon(Icons.Default.Cloud, null) },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent) // 👈 消除白框
                             )
                         }
                     }
