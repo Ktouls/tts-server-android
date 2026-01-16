@@ -1,15 +1,15 @@
 package com.github.jing332.tts_server_android.constant
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import com.github.jing332.tts_server_android.App
 import com.github.jing332.tts_server_android.BuildConfig
+import com.github.jing332.tts_server_android.app // 使用全局定义的 app
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import java.io.File
 import java.util.Locale
 
 @SuppressLint("SimpleDateFormat")
@@ -17,15 +17,16 @@ import java.util.Locale
 object AppConst {
     val fileProviderAuthor = BuildConfig.APPLICATION_ID + ".fileprovider"
     
-    val localBroadcast by lazy { LocalBroadcastManager.getInstance(App.context) }
-    val externalFilesDir by lazy { checkNotNull(App.context.getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
-    val externalCacheDir by lazy { checkNotNull(App.context.externalCacheDir) { "externalCacheDir == null" } }
+    // 关键修正：显式指定类型（如 : LocalBroadcastManager），并改用全局 app
+    val localBroadcast: LocalBroadcastManager by lazy { LocalBroadcastManager.getInstance(app) }
+    val externalFilesDir: File by lazy { checkNotNull(app.getExternalFilesDir("")) { "getExternalFilesDir() == null" } }
+    val externalCacheDir: File by lazy { checkNotNull(app.externalCacheDir) { "externalCacheDir == null" } }
 
     var isSysTtsLogEnabled = true
     var isServerLogEnabled = false
 
     @OptIn(ExperimentalSerializationApi::class)
-    val jsonBuilder by lazy {
+    val jsonBuilder: Json by lazy {
         Json {
             allowStructuredMapKeys = true
             ignoreUnknownKeys = true
@@ -36,18 +37,17 @@ object AppConst {
     }
 
     val isCnLocale: Boolean
-        get() = App.context.resources.configuration.locale.language.endsWith("zh")
+        get() = app.resources.configuration.locale.language.endsWith("zh")
 
     val locale: Locale
-        get() = App.context.resources.configuration.locale
+        get() = app.resources.configuration.locale
 
     val appInfo: AppInfo by lazy {
         val appInfo = AppInfo()
-        val context = App.context
         try {
-            // 显式使用 context 引用方法，防止编译器迷路
-            val info: PackageInfo = context.packageManager.getPackageInfo(
-                context.packageName, 
+            // 显式指定 PackageInfo 类型，解决 Cannot infer type 报错
+            val info: PackageInfo = app.packageManager.getPackageInfo(
+                app.packageName, 
                 PackageManager.GET_ACTIVITIES
             )
             appInfo.versionName = info.versionName ?: ""
