@@ -43,7 +43,7 @@ internal fun BackupDialog(
         {
         }
 
-    var isLoading by remember { mutableStateOf(false) }
+    // var isLoading by remember { mutableStateOf(false) } // 虽然没用到，但保留也无妨，为了整洁我先注释掉
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -91,13 +91,14 @@ internal fun BackupDialog(
                 
                 // 新增：WebDAV 勾选框
                 item {
+                    val configFirst = stringResource(R.string.config_webdav_first)
                     TextCheckBox(
                         modifier = Modifier.fillMaxWidth(),
-                        text = { Text("上传至 WebDAV") },
+                        text = { Text(stringResource(R.string.backup_to_webdav)) },
                         checked = uploadToWebDav,
                         onCheckedChange = { 
                              if (it && AppConfig.webDavUrl.value.isBlank()) {
-                                 Toast.makeText(context, "请先在主界面配置 WebDAV", Toast.LENGTH_SHORT).show()
+                                 Toast.makeText(context, configFirst, Toast.LENGTH_SHORT).show()
                              } else {
                                  uploadToWebDav = it 
                              }
@@ -121,7 +122,7 @@ internal fun BackupDialog(
                             if (uploadToWebDav) {
                                 // 上传到 WebDAV
                                 vm.uploadToWebDav(data, fileName)
-                                Toast.makeText(context, "备份已上传到 WebDAV", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, context.getString(R.string.backup_uploaded_success), Toast.LENGTH_LONG).show()
                             } else {
                                 // 本地保存
                                 filePicker.launch(
