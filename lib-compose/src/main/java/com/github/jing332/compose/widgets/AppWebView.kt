@@ -147,18 +147,14 @@ fun AppWebView(
                 onPageFinished.invoke(view, url ?: "")
             }
 
-            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-            }
-
             override fun onReceivedError(
                 view: WebView,
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
-
-                if (request?.url?.toString()?.startsWith(state.lastLoadedUrl ?: "null") == true){
+                // 优化：仅在主页面报错时重试，避免死循环
+                if (request?.isForMainFrame == true && request.url?.toString()?.startsWith(state.lastLoadedUrl ?: "null") == true){
                     view.reload()
                 }
             }
@@ -166,7 +162,6 @@ fun AppWebView(
     }
     val refreshState = rememberPullToRefreshState()
     val isDarkTheme = isSystemInDarkTheme()
-
 
     val bundle: Bundle = rememberSaveable { bundleOf() }
 
@@ -204,6 +199,13 @@ fun AppWebView(
                     javaScriptEnabled = true
                     domStorageEnabled = true
                     databaseEnabled = true
+                    
+                    // 🛠️ 关键修复：优化加载和缓存策略
+                    cacheMode = WebSettings.LOAD_DEFAULT 
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // 允许 HTTP/HTTPS 混合
+                    allowFileAccess = true 
+                    allowContentAccess = true
+
                     userAgentString = userAgent
 
                     if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
@@ -225,7 +227,6 @@ fun AppWebView(
                     if (!isMobile(userAgent)) {
                         loadWithOverviewMode = true;
                         layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL;
-                        loadWithOverviewMode = true;
                         useWideViewPort = true;
                         setSupportZoom(true)
                         builtInZoomControls = true
@@ -248,21 +249,6 @@ fun AppWebView(
                     )
                 }
             }
-        )
-    }
-}
-
-@Preview
-@Composable
-private fun PreviewWeb() {
-    MaterialTheme {
-        AppWebView(
-            state = rememberWebViewState(url = "http://toolwa.com/browserinfo"),
-            userAgent = "Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36 EdgA/107.0.1418.42",
-            navigator = rememberWebViewNavigator(),
-            onPageFinished = { _, _ -> },
-            onCreated = { },
-            onDispose = { },
         )
     }
 }
