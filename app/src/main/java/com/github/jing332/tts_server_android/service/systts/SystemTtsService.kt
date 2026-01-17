@@ -72,6 +72,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -341,47 +342,39 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 return@runBlocking
             }.value
             synthesizerJob = mScope.launch {
-                mTtsManager?.synthesize(
-                    params = SystemParams(text = request.charSequenceText.toString()),
-                    forceConfigId = cfgId,
-                    callback = object :
-                        com.github.jing332.tts.synthesizer.SynthesisCallback {
-                        override fun onSynthesizeStart(sampleRate: Int) {
-                            callback.start(
-                                /* sampleRateInHz = */ sampleRate,
-                                /* audioFormat = */ AudioFormat.ENCODING_PCM_16BIT,
-                                /* channelCount = */ 1
-                            )
-                        }
+                try {
+                    mTtsManager?.synthesize(
+                        params = SystemParams(text = request.charSequenceText.toString()),
+                        forceConfigId = cfgId,
+                        callback = object :
+                            com.github.jing332.tts.synthesizer.SynthesisCallback {
+                            override fun onSynthesizeStart(sampleRate: Int) {
+                                callback.start(
+                                    /* sampleRateInHz = */ sampleRate,
+                                    /* audioFormat = */ AudioFormat.ENCODING_PCM_16BIT,
+                                    /* channelCount = */ 1
+                                )
+                            }
 
-                        override fun onSynthesizeAvailable(audio: ByteArray) {
-                            writeToCallBack(callback, audio)
-                        }
+                            override fun onSynthesizeAvailable(audio: ByteArray) {
+                                writeToCallBack(callback, audio)
+                            }
 
+                        }
+                    )?.onSuccess {
+                        logger.debug { "done" }
+                        callback.done()
+                    }?.onFailure {
+                        handleSynthesisError(it, callback)
                     }
-                )?.onSuccess {
-                    logger.debug { "done" }
+                } catch (e: TimeoutCancellationException) {
+                    logE("Synthesize Timeout: ${e.message}")
+                    callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
                     callback.done()
-                }?.onFailure {
-                    when (it) {
-                        SynthesisError.ConfigEmpty -> {
-                            callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                        }
-
-                        is SynthesisError.TextHandle -> {
-                            // eventListener already handled
-                            // handleTextProcessorError(it.err)
-                            callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                            awaitCancellation()
-                        }
-
-                        is SynthesisError.PresetMissing -> {
-                            logE(R.string.tts_config_not_exist)
-                            longToast(R.string.tts_config_not_exist)
-                            callback.error(TextToSpeech.ERROR_INVALID_REQUEST)
-                        }
-                    }
-//                    callback.done()
+                } catch (e: Exception) {
+                    logE("Synthesize Exception: ${e.message}")
+                    callback.error(TextToSpeech.ERROR_SYNTHESIS)
+                    callback.done()
                 }
             }
 
@@ -394,6 +387,27 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             stopForeground(true)
             mNotificationDisplayed = false
         }
+    }
+
+    // 修正：抽取错误处理逻辑，确保不管什么错误都能正确结束 callback 状态，防止服务假死
+    private suspend fun handleSynthesisError(err: SynthesisError, callback: android.speech.tts.SynthesisCallback) {
+        when (err) {
+            SynthesisError.ConfigEmpty -> {
+                callback.error(TextToSpeech.ERROR_SYNTHESIS)
+            }
+
+            is SynthesisError.TextHandle -> {
+                callback.error(TextToSpeech.ERROR_SYNTHESIS)
+                awaitCancellation()
+            }
+
+            is SynthesisError.PresetMissing -> {
+                logE(R.string.tts_config_not_exist)
+                longToast(R.string.tts_config_not_exist)
+                callback.error(TextToSpeech.ERROR_INVALID_REQUEST)
+            }
+        }
+        callback.done()
     }
 
     private fun writeToCallBack(
