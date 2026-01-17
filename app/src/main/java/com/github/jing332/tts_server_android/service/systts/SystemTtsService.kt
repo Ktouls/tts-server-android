@@ -343,15 +343,15 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 return@runBlocking
             }.value
 
-            // 【严谨修改】这里添加了 CoroutineExceptionHandler
-            // 它是协程的最后一道防线。当 GlobalHttp 抛出异常，NativeResponse 传递异常时，
-            // 只有这里能接住，确保 APP 不闪退，并正确回调 ERROR_SYNTHESIS
+            // 【严谨修改】核心防线：CoroutineExceptionHandler
+            // 捕获所有协程内未处理的异常（包括 ScriptException），防止 APP 闪退。
             val exceptionHandler = CoroutineExceptionHandler { _, e ->
                 logE("Synthesize Crash Caught: ${e.message}", e)
                 callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 callback.done()
             }
 
+            // 将 exceptionHandler 传入 launch
             synthesizerJob = mScope.launch(exceptionHandler) {
                 try {
                     mTtsManager?.synthesize(
