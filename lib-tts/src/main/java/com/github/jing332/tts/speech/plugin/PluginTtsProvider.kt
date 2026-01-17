@@ -31,14 +31,23 @@ open class PluginTtsProvider(
 
         // source.data mapping to ttsrv.tts.data for javascript
         mEngine?.source = source
-        return mEngine?.getAudio(
-            text = params.text,
-            locale = source.locale,
-            voice = source.voice,
-            rate = speed,
-            volume = volume,
-            pitch = pitch
-        ) ?: throw IllegalStateException("Engine not initialized: ${plugin.pluginId}")
+
+        // 修正：增加异常捕获与状态重置，确保在断网后能自动触发重连自愈
+        return try {
+            mEngine?.getAudio(
+                text = params.text,
+                locale = source.locale,
+                voice = source.voice,
+                rate = speed,
+                volume = volume,
+                pitch = pitch
+            ) ?: throw IllegalStateException("Engine not initialized: ${plugin.pluginId}")
+        } catch (e: Exception) {
+            // 修正：发生网络或其他异常时，重置引擎状态为未初始化
+            // 这将强制下一次请求重新执行 onInit()，从而实现网络恢复后的自愈
+            state = EngineState.Uninitialized()
+            throw e
+        }
     }
 
     override suspend fun onInit() {
