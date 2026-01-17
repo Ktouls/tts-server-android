@@ -327,7 +327,7 @@ class PluginTtsUI : IConfigUI() {
                     .fillMaxWidth()
                     .padding(top = 16.dp),
                 systemTts = systts,
-                onSystemTtsChange = onSystemTtsChange
+                onSystemTtsChange = onSysttsChange
             )
         }
     }
