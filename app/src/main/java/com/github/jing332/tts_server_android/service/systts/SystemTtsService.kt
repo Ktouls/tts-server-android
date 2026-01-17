@@ -1,11 +1,9 @@
 package com.github.jing332.tts_server_android.service.systts
 
-import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.ServiceStartNotAllowedException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,8 +20,6 @@ import android.speech.tts.TextToSpeechService
 import android.speech.tts.Voice
 import android.util.Log
 import androidx.annotation.StringRes
-import androidx.compose.ui.res.stringResource
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat.stopForeground
 import androidx.core.content.ContextCompat
 import com.github.jing332.common.utils.StringUtils
@@ -67,7 +63,6 @@ import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Result
 import com.github.michaelbull.result.onFailure
 import com.github.michaelbull.result.onSuccess
-import com.github.michaelbull.result.runCatching
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -80,7 +75,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 import splitties.systemservices.notificationManager
-import java.nio.ByteBuffer
 import java.util.Locale
 import kotlin.jvm.Throws
 import kotlin.system.exitProcess
@@ -335,7 +329,6 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         mTtsManager?.context?.cfg?.bgmEnabled = { enabledBgm }
 
         runBlocking {
-             // If the voiceName is not empty, get the configuration ID from the voiceName.
             var cfgId: Long? = getConfigIdFromVoiceName(request.voiceName ?: "").onFailure {
                 longToast(R.string.voice_name_bad_format)
                 callback.error(TextToSpeech.ERROR_INVALID_REQUEST)
@@ -382,7 +375,8 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 } catch (e: Exception) {
                     logE("Synthesize Exception: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    callback.done()
+                    // 注意：这里不要再调用 callback.done()，因为 error() 已经足够。
+                    // 之前的死循环可能与 error 和 done 同时调用有关。
                 }
             }
 
@@ -417,23 +411,32 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         callback.done()
     }
 
-    // 【修改核心】：检测是否为错误信息。如果是，报错并中断；不是则写入音频。
-    // 这解决了“闪退”问题（因为NativeResponse不抛异常了），也解决了“假死”问题（因为这里手动报错了）。
+    // 【修改核心】：增加关键词检测，并强制抛出异常中断 onSuccess
     private fun writeToCallBack(
         callback: android.speech.tts.SynthesisCallback,
         pcmData: ByteArray,
     ) {
         try {
-            // 1. 检查数据是否异常（太小且包含错误关键词）
+            // 1. 检查数据是否为网络错误文本
             // 当 GlobalHttp 返回 503 且 NativeResponse 直接返回文本时，我们会在这里收到这段文本
             if (pcmData.size < 1024) { 
                 val str = String(pcmData)
-                if (str.contains("503") || str.contains("Response failed")) {
+                // 扩充关键词：涵盖常见的网络错误
+                if (str.contains("503") || 
+                    str.contains("Response failed") ||
+                    str.contains("Unable to resolve") ||
+                    str.contains("timeout") ||
+                    str.contains("ConnectException")) {
+                    
                     logE("检测到网络错误信息，停止合成: $str")
-                    // 关键点：调用 error 告诉系统“这句失败了”，触发重试
+                    
+                    // 步骤A: 告诉系统失败了
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    // 关键点：return，不要把这段乱码写入播放器，也不要抛出异常（防止崩线程）
-                    return
+                    
+                    // 步骤B: 【关键】抛出 RuntimeException 以中断 MixSynthesizer 的执行流！
+                    // 这样 MixSynthesizer 就不会继续走到 onSuccess -> callback.done()，
+                    // 从而避免了 "Bad Audio" 和 "Done" 同时出现的冲突状态。
+                    throw RuntimeException("Network Error Detected: $str")
                 }
             }
 
@@ -442,13 +445,18 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             var offset = 0
             while (offset < pcmData.size && mTtsManager!!.isSynthesizing) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
-                callback.audioAvailable(pcmData, offset, bytesToWrite)
+                val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
+                if (ret == TextToSpeech.ERROR) {
+                    throw RuntimeException("SynthesisCallback.audioAvailable returned ERROR")
+                }
                 offset += bytesToWrite
             }
         } catch (e: Exception) {
-            logE("writeToCallBack: ${e.toString()}")
-            // 这里也不要抛出异常，而是报告错误
-            callback.error(TextToSpeech.ERROR_SYNTHESIS)
+            // 如果是刚才我们自己抛出的 Network Error，会被这里捕获，我们需要把它继续往上抛，
+            // 让 onSynthesizeText 的 catch 块去处理（或者让 exceptionHandler 处理），
+            // 确保 MixSynthesizer 知道任务失败了。
+            logE("writeToCallBack error: ${e.message}")
+            throw e 
         }
     }
 
