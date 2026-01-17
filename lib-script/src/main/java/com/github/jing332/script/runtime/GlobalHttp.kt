@@ -6,9 +6,12 @@ import com.github.jing332.script.exception.runScriptCatching
 import io.github.oshai.kotlinlogging.KotlinLogging
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
+import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
@@ -34,6 +37,18 @@ class GlobalHttp : ScriptableObject() {
             if (sealed) obj.sealObject()
         }
 
+        // 新增：构建一个表示错误的响应对象（503 Service Unavailable）
+        // 作用：拦截子线程的崩溃，将其转化为一个可被上层处理的 Response 对象
+        private fun returnErrorResponse(url: String, e: Exception): Response {
+            val msg = e.message ?: "Unknown Error"
+            return Response.Builder()
+                .request(Request.Builder().url(url).build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(503) 
+                .message(msg)
+                .body(msg.toResponseBody(null))
+                .build()
+        }
 
         @Suppress("UNCHECKED_CAST")
         @JvmStatic
@@ -46,13 +61,19 @@ class GlobalHttp : ScriptableObject() {
             val url = args[0] as CharSequence
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
-            // 【严谨恢复】直接请求，不拦截异常，让 SystemTtsService 去处理
             runScriptCatching {
-                val resp = Net.get(url.toString()) {
-                    headers?.forEach {
-                        setHeader(it.key.toString(), it.value.toString())
-                    }
-                }.execute<Response>()
+                // 【严谨修改】增加 try-catch 保护
+                // 目的：捕获 Net 库在子线程抛出的致命异常，防止 APP 直接闪退
+                val resp = try {
+                    Net.get(url.toString()) {
+                        headers?.forEach {
+                            setHeader(it.key.toString(), it.value.toString())
+                        }
+                    }.execute<Response>()
+                } catch (e: Exception) {
+                    logger.error(e) { "Get request failed: $url" }
+                    returnErrorResponse(url.toString(), e)
+                }
                 NativeResponse.of(cx, scope, resp)
             }
         }
@@ -117,21 +138,26 @@ class GlobalHttp : ScriptableObject() {
                 "POST $url, $body, $headers"
             }
 
-            // 【严谨恢复】直接请求，不拦截异常
             runScriptCatching {
-                val resp: Response = Net.post(url.toString()) {
-                    headers?.forEach {
-                        setHeader(it.key.toString(), it.value.toString())
-                    }
-                    if (body is CharSequence)
-                        this.body = body.toString().toRequestBody(contentType)
-                    else if (body is Map<*, *>)
-                        this.body = postMultipart(
-                            "multipart/form-data",
-                            body as Map<CharSequence, Any>
-                        ).build()
+                // 【严谨修改】增加 try-catch 保护
+                val resp: Response = try {
+                    Net.post(url.toString()) {
+                        headers?.forEach {
+                            setHeader(it.key.toString(), it.value.toString())
+                        }
+                        if (body is CharSequence)
+                            this.body = body.toString().toRequestBody(contentType)
+                        else if (body is Map<*, *>)
+                            this.body = postMultipart(
+                                "multipart/form-data",
+                                body as Map<CharSequence, Any>
+                            ).build()
 
-                }.execute()
+                    }.execute()
+                } catch (e: Exception) {
+                    logger.error(e) { "Post request failed: $url" }
+                    returnErrorResponse(url.toString(), e)
+                }
                 NativeResponse.of(cx, scope, resp)
             }
         }
