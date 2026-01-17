@@ -20,7 +20,6 @@ import com.github.jing332.tts.speech.plugin.PluginTtsProvider
 import com.github.jing332.tts.speech.plugin.TtsPluginEngineManager
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
 import com.github.jing332.tts_server_android.JsConsoleManager
-import com.github.jing332.tts_server_android.app
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,6 +31,11 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
 
     lateinit var engine: TtsPluginUiEngineV2
     val pluginList = mutableStateListOf<Plugin>()
+
+    // 修复点 4：初始化为 false，确保 PluginTtsUI 中的 AndroidView 能被初步渲染以触发 load
+    var isLoading by mutableStateOf(false) 
+    val locales = mutableStateListOf<Pair<String, String>>()
+    val voices = mutableStateListOf<TtsPluginUiEngineV2.Voice>()
 
     fun loadPluginList() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -45,7 +49,7 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
 
     @Suppress("UNCHECKED_CAST")
     fun service(): TextToSpeechProvider<TextToSpeechSource> {
-        return PluginTtsProvider(app as Context, engine.plugin).also {
+        return PluginTtsProvider(getApplication(), engine.plugin).also {
             it.engine = engine
         } as TextToSpeechProvider<TextToSpeechSource>
     }
@@ -57,8 +61,8 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         engine = if (plugin == null)
-            TtsPluginEngineManager.get(app as Context, getPluginFromDB(source.pluginId))
-        else TtsPluginUiEngineV2(app as Context, plugin).apply { eval() }
+            TtsPluginEngineManager.get(getApplication(), getPluginFromDB(source.pluginId))
+        else TtsPluginUiEngineV2(getApplication(), plugin).apply { eval() }
 
         engine.console = JsConsoleManager.ui
         engine.source = source
@@ -68,34 +72,28 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         dbm.pluginDao.getEnabled(pluginId = id)
             ?: throw IllegalStateException("Plugin $id not found from database")
 
-    var isLoading by mutableStateOf(true)
-    val locales = mutableStateListOf<Pair<String, String>>()
-    val voices = mutableStateListOf<TtsPluginUiEngineV2.Voice>()
-
     suspend fun load(
         context: Context,
         plugin: Plugin?,
         source: PluginTtsSource,
         linearLayout: LinearLayout,
-    ) =
-        withIO {
-            isLoading = true
-            try {
-                initEngine(plugin, source)
-                engine.onLoadData()
+    ) = withIO {
+        withMain { isLoading = true }
+        try {
+            initEngine(plugin, source)
+            engine.onLoadData()
 
-                withMain {
-                    engine.onLoadUI(context, linearLayout)
-                }
-
-                updateLocales()
-                updateVoices(source.locale)
-            } catch (t: Throwable) {
-                throw t
-            } finally {
-                isLoading = false
+            withMain {
+                linearLayout.removeAllViews() // 清理旧视图
+                engine.onLoadUI(context, linearLayout)
             }
+
+            updateLocales()
+            updateVoices(source.locale)
+        } finally {
+            withMain { isLoading = false }
         }
+    }
 
     private suspend fun updateLocales() {
         val list = engine.getLocales().toList()
@@ -106,6 +104,7 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun updateVoices(locale: String) {
+        if (locale.isBlank()) return
         val list = engine.getVoices(locale).toList()
         withMain {
             voices.clear()
