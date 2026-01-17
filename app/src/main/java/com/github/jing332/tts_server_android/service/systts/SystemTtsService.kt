@@ -343,15 +343,12 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 return@runBlocking
             }.value
 
-            // 【严谨修改】核心防线：CoroutineExceptionHandler
-            // 捕获所有协程内未处理的异常（包括 ScriptException），防止 APP 闪退。
             val exceptionHandler = CoroutineExceptionHandler { _, e ->
                 logE("Synthesize Crash Caught: ${e.message}", e)
                 callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 callback.done()
             }
 
-            // 将 exceptionHandler 传入 launch
             synthesizerJob = mScope.launch(exceptionHandler) {
                 try {
                     mTtsManager?.synthesize(
@@ -420,11 +417,27 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         callback.done()
     }
 
+    // 【修改核心】：检测是否为错误信息。如果是，报错并中断；不是则写入音频。
+    // 这解决了“闪退”问题（因为NativeResponse不抛异常了），也解决了“假死”问题（因为这里手动报错了）。
     private fun writeToCallBack(
         callback: android.speech.tts.SynthesisCallback,
         pcmData: ByteArray,
     ) {
         try {
+            // 1. 检查数据是否异常（太小且包含错误关键词）
+            // 当 GlobalHttp 返回 503 且 NativeResponse 直接返回文本时，我们会在这里收到这段文本
+            if (pcmData.size < 1024) { 
+                val str = String(pcmData)
+                if (str.contains("503") || str.contains("Response failed")) {
+                    logE("检测到网络错误信息，停止合成: $str")
+                    // 关键点：调用 error 告诉系统“这句失败了”，触发重试
+                    callback.error(TextToSpeech.ERROR_SYNTHESIS)
+                    // 关键点：return，不要把这段乱码写入播放器，也不要抛出异常（防止崩线程）
+                    return
+                }
+            }
+
+            // 2. 正常写入音频
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
             while (offset < pcmData.size && mTtsManager!!.isSynthesizing) {
@@ -434,6 +447,8 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             }
         } catch (e: Exception) {
             logE("writeToCallBack: ${e.toString()}")
+            // 这里也不要抛出异常，而是报告错误
+            callback.error(TextToSpeech.ERROR_SYNTHESIS)
         }
     }
 
