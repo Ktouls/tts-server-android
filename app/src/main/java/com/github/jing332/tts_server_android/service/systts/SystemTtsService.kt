@@ -75,6 +75,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 import splitties.systemservices.notificationManager
+import java.nio.charset.StandardCharsets
 import java.util.Locale
 import kotlin.jvm.Throws
 import kotlin.system.exitProcess
@@ -375,8 +376,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 } catch (e: Exception) {
                     logE("Synthesize Exception: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    // 注意：这里不要再调用 callback.done()，因为 error() 已经足够。
-                    // 之前的死循环可能与 error 和 done 同时调用有关。
+                    // 不要调用 done()，防止状态冲突
                 }
             }
 
@@ -411,36 +411,32 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         callback.done()
     }
 
-    // 【修改核心】：增加关键词检测，并强制抛出异常中断 onSuccess
+    // 【核心修改】对暗号 + 强制抛出异常
     private fun writeToCallBack(
         callback: android.speech.tts.SynthesisCallback,
         pcmData: ByteArray,
     ) {
         try {
-            // 1. 检查数据是否为网络错误文本
-            // 当 GlobalHttp 返回 503 且 NativeResponse 直接返回文本时，我们会在这里收到这段文本
-            if (pcmData.size < 1024) { 
-                val str = String(pcmData)
-                // 扩充关键词：涵盖常见的网络错误
-                if (str.contains("503") || 
-                    str.contains("Response failed") ||
-                    str.contains("Unable to resolve") ||
-                    str.contains("timeout") ||
-                    str.contains("ConnectException")) {
+            // 只检测前 512 字节，避免处理大音频
+            if (pcmData.size < 512) { 
+                // 使用 UTF-8 解析，确保暗号匹配正确
+                val str = String(pcmData, StandardCharsets.UTF_8)
+                
+                // 对暗号：检查是否包含 GlobalHttp 发来的 TTS_NET_ERR:
+                if (str.startsWith("TTS_NET_ERR:")) {
                     
-                    logE("检测到网络错误信息，停止合成: $str")
+                    logE("捕获网络错误(停止合成): $str")
                     
-                    // 步骤A: 告诉系统失败了
+                    // 1. 报告系统失败
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
                     
-                    // 步骤B: 【关键】抛出 RuntimeException 以中断 MixSynthesizer 的执行流！
-                    // 这样 MixSynthesizer 就不会继续走到 onSuccess -> callback.done()，
-                    // 从而避免了 "Bad Audio" 和 "Done" 同时出现的冲突状态。
-                    throw RuntimeException("Network Error Detected: $str")
+                    // 2. 【绝杀】抛出 RuntimeException，强制中断代码执行流！
+                    // 这将阻止 MixSynthesizer 此时继续执行到 onSuccess -> done()
+                    // 确保系统只会收到 Error，不会收到 Done。
+                    throw RuntimeException("Network Error Interrupt: $str")
                 }
             }
 
-            // 2. 正常写入音频
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
             while (offset < pcmData.size && mTtsManager!!.isSynthesizing) {
@@ -452,11 +448,8 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 offset += bytesToWrite
             }
         } catch (e: Exception) {
-            // 如果是刚才我们自己抛出的 Network Error，会被这里捕获，我们需要把它继续往上抛，
-            // 让 onSynthesizeText 的 catch 块去处理（或者让 exceptionHandler 处理），
-            // 确保 MixSynthesizer 知道任务失败了。
             logE("writeToCallBack error: ${e.message}")
-            throw e 
+            throw e // 必须抛出，让上层知道失败
         }
     }
 
