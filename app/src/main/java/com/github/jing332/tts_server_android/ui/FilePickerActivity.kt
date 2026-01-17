@@ -288,7 +288,9 @@ class FilePickerActivity : ComposeActivity() {
                 .filter(object : AbstractFileFilter() {
                     override fun doFilter(listData: ArrayList<FileItemBeanImpl>): ArrayList<FileItemBeanImpl> {
                         return ArrayList(listData.filter { item ->
-                            item.isDir || reqSelectFile.fileMimes.contains(File(item.filePath).mimeType)
+                            // 🛠️ 修复：增加通配符支持逻辑。如果 MIME 列表包含 '*' 或 '*/*'，或者文件 MIME 匹配列表，则保留该文件
+                            val isWildcard = reqSelectFile.fileMimes.any { it == "*" || it == "*/*" }
+                            item.isDir || isWildcard || reqSelectFile.fileMimes.contains(File(item.filePath).mimeType)
                         })
                     }
                 })
