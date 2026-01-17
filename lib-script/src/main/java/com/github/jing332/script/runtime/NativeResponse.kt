@@ -100,9 +100,9 @@ class NativeResponse private constructor(val rawResponse: Response? = null) :
             return obj
         }
 
-        // 【关键逻辑】严厉检查。
-        // 如果 HTTP 状态码表示失败，立即抛出异常。
-        // 这确保了只有真正的音频数据才会被后续流程处理，避免脏缓存。
+        // 【关键逻辑】严厉检查模式。
+        // 如果 GlobalHttp 返回了 503 (代表网络错误)，这里必须抛出异常。
+        // 异常会被 SystemTtsService 捕获，从而触发重试，避免缓存错误文件。
         private fun NativeResponse.checkResponse(force: Boolean): Response {
             val resp = rawResponse ?: throw IllegalStateException("rawResponse is null")
             if (force) return resp
