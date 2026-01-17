@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Parcelable
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
@@ -98,7 +99,7 @@ class FilePickerActivity : ComposeActivity() {
             FilePickerManager.REQUEST_CODE -> {
                 if (resultCode == Activity.RESULT_OK) {
                     val list = FilePickerManager.obtainData()
-                    resultAndFinish(list.getOrNull(0)?.toUri())
+                    resultAndFinish(list.getOrNull(0)?.let { File(it).toUri() })
                 }
                 finish()
             }
@@ -125,6 +126,18 @@ class FilePickerActivity : ComposeActivity() {
             else -> super.onActivityResult(requestCode, resultCode, data)
         }
 
+    }
+
+    // 修正：权限请求结果回调
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            doAction() // 获得权限后立即执行
+        }
     }
 
     private fun checkPermission(permission: String): Boolean {
@@ -154,10 +167,13 @@ class FilePickerActivity : ComposeActivity() {
 
         requestData = intent.getParcelableExtra(KEY_REQUEST_DATA)!!
 
-        checkPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            checkPermission(Manifest.permission.READ_MEDIA_AUDIO)
+        val readPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
         }
+
+        val hasPermission = checkPermission(readPermission)
 
         if (requestData is RequestSaveFile) {
             val permission = ActivityCompat.checkSelfPermission(
@@ -229,14 +245,13 @@ class FilePickerActivity : ComposeActivity() {
 
             FilePickerMode.SYSTEM -> {
                 useSystem = true
-                doAction()
+                if (hasPermission) doAction()
             }
 
             FilePickerMode.BUILTIN -> {
                 useSystem = false
-                doAction()
+                if (hasPermission) doAction()
             }
-
         }
     }
 
@@ -273,7 +288,9 @@ class FilePickerActivity : ComposeActivity() {
     private fun selectFile() {
         if (useSystem) {
             kotlin.runCatching {
-                docSelector.launch(reqSelectFile.fileMimes.toTypedArray())
+                // 修正：修正 MIME 类型通配符，确保 zip 可见
+                val mimes = reqSelectFile.fileMimes.map { if (it == "*") "*/*" else it }
+                docSelector.launch(mimes.toTypedArray())
             }.onFailure {
                 toast(R.string.sys_doc_picker_error)
                 useSystem = true
@@ -285,10 +302,11 @@ class FilePickerActivity : ComposeActivity() {
                 .maxSelectable(1)
                 .showCheckBox(false)
                 .enableSingleChoice()
+                .setCustomRootPath(Environment.getExternalStorageDirectory().absolutePath) // 修正：设置起始路径
                 .filter(object : AbstractFileFilter() {
                     override fun doFilter(listData: ArrayList<FileItemBeanImpl>): ArrayList<FileItemBeanImpl> {
                         return ArrayList(listData.filter { item ->
-                            // 🛠️ 修复：增加通配符支持逻辑。如果 MIME 列表包含 '*' 或 '*/*'，或者文件 MIME 匹配列表，则保留该文件
+                            // 修正：确保文件夹始终可见
                             val isWildcard = reqSelectFile.fileMimes.any { it == "*" || it == "*/*" }
                             item.isDir || isWildcard || reqSelectFile.fileMimes.contains(File(item.filePath).mimeType)
                         })
@@ -316,6 +334,7 @@ class FilePickerActivity : ComposeActivity() {
         FilePickerManager
             .from(this)
             .maxSelectable(1)
+            .setCustomRootPath(Environment.getExternalStorageDirectory().absolutePath) // 修正：设置起始路径
             .filter(object : AbstractFileFilter() {
                 override fun doFilter(listData: ArrayList<FileItemBeanImpl>): ArrayList<FileItemBeanImpl> {
                     return ArrayList(listData.filter { item ->
