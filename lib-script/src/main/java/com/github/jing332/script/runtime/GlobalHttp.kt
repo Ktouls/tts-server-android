@@ -17,12 +17,17 @@ import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class GlobalHttp : ScriptableObject() {
     companion object {
         const val NAME = "http"
         private val TAG = "GlobalHttp"
         private val logger = KotlinLogging.logger(TAG)
+
+        // 重试配置：150次 * 2秒间隔 ≈ 5分钟
+        private const val MAX_RETRY_COUNTS = 150
+        private const val RETRY_INTERVAL_MS = 2000L
 
         @JvmStatic
         fun init(cx: Context, scope: Scriptable, sealed: Boolean) {
@@ -37,33 +42,50 @@ class GlobalHttp : ScriptableObject() {
             if (sealed) obj.sealObject()
         }
 
-        // 【关键逻辑】带重试的网络请求执行器
-        // 如果断网，它会一直在这里循环等待，不会抛出异常，也不会返回错误
-        // 阅读APP会因此处于“加载中”状态，而不会报错停止
+        private fun returnErrorResponse(url: String, msg: String): Response {
+            Log.e(TAG, "重试耗尽或被强杀，返回错误: $msg")
+            return Response.Builder()
+                .request(Request.Builder().url(url).build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(503)
+                .message(msg)
+                .body(msg.toResponseBody(null))
+                .build()
+        }
+
+        // 【核心修复】自动重试机制
+        // 专门解决：1. 断网闪退  2. 15秒超时报错
         private fun executeWithRetry(url: String, block: () -> Response): Response {
-            var retryCount = 0
-            while (true) { // 无限重试，直到成功 (你可以加个最大限制，比如60次)
+            var currentRetry = 0
+            var lastError: Exception? = null
+
+            while (currentRetry < MAX_RETRY_COUNTS) {
                 try {
-                    val response = block()
-                    if (response.isSuccessful) {
-                        if (retryCount > 0) Log.i(TAG, "网络已恢复，重试成功: $url")
-                        return response
+                    val resp = block()
+                    if (resp.isSuccessful) {
+                        if (currentRetry > 0) Log.i(TAG, "重试成功 ($currentRetry): $url")
+                        return resp
                     } else {
-                        // 遇到 404/500 等服务器错误，选择直接返回还是重试？
-                        // 这里我们假设非200也直接返回，交给脚本处理
-                        return response 
+                        // 如果服务器返回 5xx 错误，也视为失败进行重试
+                        throw RuntimeException("HTTP Code ${resp.code}")
                     }
                 } catch (e: Exception) {
-                    retryCount++
-                    Log.w(TAG, "请求失败 (第${retryCount}次): ${e.message}。等待2秒后重试...")
+                    lastError = e
+                    currentRetry++
+                    
+                    // 仅在 Logcat 打印，不抛出给 APP
+                    if (currentRetry % 5 == 1) { 
+                        Log.w(TAG, "网络请求异常 ($currentRetry/$MAX_RETRY_COUNTS): ${e.message}. 正在重试...")
+                    }
+
                     try {
-                        Thread.sleep(2000) // 等待2秒
-                    } catch (e: InterruptedException) {
-                        // 如果线程被强行中断（比如关闭APP），则退出
-                        throw e 
+                        Thread.sleep(RETRY_INTERVAL_MS)
+                    } catch (interrupted: InterruptedException) {
+                        return returnErrorResponse(url, "Interrupted")
                     }
                 }
             }
+            return returnErrorResponse(url, "Max retry reached: ${lastError?.message}")
         }
 
         @Suppress("UNCHECKED_CAST")
@@ -78,12 +100,15 @@ class GlobalHttp : ScriptableObject() {
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
             runScriptCatching {
-                // 使用重试逻辑包裹 Net.get
                 val resp = executeWithRetry(url.toString()) {
                     Net.get(url.toString()) {
-                        headers?.forEach {
-                            setHeader(it.key.toString(), it.value.toString())
-                        }
+                        headers?.forEach { setHeader(it.key.toString(), it.value.toString()) }
+                        
+                        // 【关键修改】显式设置底层超时时间为 30秒
+                        // 覆盖默认的 10秒/15秒，防止底层过早报错
+                        setConnectTimeout(30, TimeUnit.SECONDS)
+                        setReadTimeout(30, TimeUnit.SECONDS)
+                        setWriteTimeout(30, TimeUnit.SECONDS)
                     }.execute<Response>()
                 }
                 NativeResponse.of(cx, scope, resp)
@@ -134,12 +159,15 @@ class GlobalHttp : ScriptableObject() {
             val contentType = headers?.get("Content-Type")?.toString()?.toMediaType()
 
             runScriptCatching {
-                // 使用重试逻辑包裹 Net.post
                 val resp = executeWithRetry(url.toString()) {
                     Net.post(url.toString()) {
-                        headers?.forEach {
-                            setHeader(it.key.toString(), it.value.toString())
-                        }
+                        headers?.forEach { setHeader(it.key.toString(), it.value.toString()) }
+                        
+                        // 【关键修改】同样延长 POST 的超时时间
+                        setConnectTimeout(30, TimeUnit.SECONDS)
+                        setReadTimeout(30, TimeUnit.SECONDS)
+                        setWriteTimeout(30, TimeUnit.SECONDS)
+
                         if (body is CharSequence)
                             this.body = body.toString().toRequestBody(contentType)
                         else if (body is Map<*, *>)
