@@ -60,7 +60,6 @@ internal fun RestoreDialog(
             }
         },
         buttons = {
-            // 👈 统一按钮顺序：左取消，右操作
             if (needRestart) {
                 TextButton(onClick = onDismissRequest) {
                     Text(stringResource(id = R.string.cancel))
@@ -70,7 +69,6 @@ internal fun RestoreDialog(
                 }
             } else {
                 if (!isLoading) {
-                    // 这里只有一个确定键，靠右放置
                     TextButton(onClick = onDismissRequest) {
                         Text(stringResource(id = R.string.confirm))
                     }
