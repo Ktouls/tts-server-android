@@ -209,7 +209,7 @@ class BackupRestoreViewModel(application: Application) : AndroidViewModel(applic
         resp.body?.bytes() ?: throw Exception("返回体为空")
     }
 
-    // 新增上传方法，供 BackupDialog.kt 调用
+    // 上传方法
     suspend fun uploadToWebDav(bytes: ByteArray, fileName: String) = withIO {
         val sardine = getSardine()
         val dirUrl = AppConfig.webDavUrl.value + AppConfig.webDavPath.value
