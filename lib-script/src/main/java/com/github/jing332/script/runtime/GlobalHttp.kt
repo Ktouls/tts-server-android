@@ -17,7 +17,7 @@ import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 import java.io.File
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeUnit // 【必须引入这个】
 
 class GlobalHttp : ScriptableObject() {
     companion object {
@@ -26,6 +26,7 @@ class GlobalHttp : ScriptableObject() {
         private val logger = KotlinLogging.logger(TAG)
 
         // 重试配置：150次 * 2秒间隔 ≈ 5分钟
+        // 只要在5分钟内网络恢复，就能自动继续播放
         private const val MAX_RETRY_COUNTS = 150
         private const val RETRY_INTERVAL_MS = 2000L
 
@@ -66,14 +67,14 @@ class GlobalHttp : ScriptableObject() {
                         if (currentRetry > 0) Log.i(TAG, "重试成功 ($currentRetry): $url")
                         return resp
                     } else {
-                        // 如果服务器返回 5xx 错误，也视为失败进行重试
+                        // 如果服务器返回 5xx 错误，抛出异常触发重试
                         throw RuntimeException("HTTP Code ${resp.code}")
                     }
                 } catch (e: Exception) {
                     lastError = e
                     currentRetry++
                     
-                    // 仅在 Logcat 打印，不抛出给 APP
+                    // 仅在 Logcat 打印，不抛出给 APP，防止刷屏
                     if (currentRetry % 5 == 1) { 
                         Log.w(TAG, "网络请求异常 ($currentRetry/$MAX_RETRY_COUNTS): ${e.message}. 正在重试...")
                     }
