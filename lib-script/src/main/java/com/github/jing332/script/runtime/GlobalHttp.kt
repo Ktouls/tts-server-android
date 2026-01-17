@@ -16,6 +16,7 @@ import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 import java.io.File
+import java.nio.charset.StandardCharsets
 
 class GlobalHttp : ScriptableObject() {
     companion object {
@@ -37,16 +38,18 @@ class GlobalHttp : ScriptableObject() {
             if (sealed) obj.sealObject()
         }
 
-        // 新增：构建一个表示错误的响应对象（503 Service Unavailable）
-        // 作用：拦截子线程的崩溃，将其转化为一个可被上层处理的 Response 对象
+        // 【修改】添加特殊前缀暗号，确保 Service 层能 100% 识别出这是错误
         private fun returnErrorResponse(url: String, e: Exception): Response {
-            val msg = e.message ?: "Unknown Error"
+            val rawMsg = e.message ?: "Unknown Error"
+            // 暗号：TTS_NET_ERR:
+            val safeMsg = "TTS_NET_ERR:$rawMsg"
+            
             return Response.Builder()
                 .request(Request.Builder().url(url).build())
                 .protocol(Protocol.HTTP_1_1)
                 .code(503) 
-                .message(msg)
-                .body(msg.toResponseBody(null))
+                .message(rawMsg)
+                .body(safeMsg.toResponseBody(null)) // 写入带暗号的 Body
                 .build()
         }
 
@@ -62,8 +65,6 @@ class GlobalHttp : ScriptableObject() {
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
             runScriptCatching {
-                // 【严谨修改】增加 try-catch 保护
-                // 目的：捕获 Net 库在子线程抛出的致命异常，防止 APP 直接闪退
                 val resp = try {
                     Net.get(url.toString()) {
                         headers?.forEach {
@@ -89,7 +90,6 @@ class GlobalHttp : ScriptableObject() {
 
             form.forEach { entry ->
                 when (entry.value) {
-                    // 文件表单
                     is Map<*, *> -> {
                         val filePartMap = entry.value as Map<CharSequence, Any>
                         val fileName = filePartMap["fileName"] as? CharSequence
@@ -110,8 +110,6 @@ class GlobalHttp : ScriptableObject() {
                             requestBody
                         )
                     }
-
-                    // 常规表单
                     else -> multipartBody.addFormDataPart(
                         entry.key.toString(),
                         entry.value as String
@@ -134,12 +132,9 @@ class GlobalHttp : ScriptableObject() {
             val body = args.getOrNull(1)
             val headers = args.getOrNull(2) as? Map<CharSequence, CharSequence>
             val contentType = headers?.get("Content-Type")?.toString()?.toMediaType()
-            logger.debug {
-                "POST $url, $body, $headers"
-            }
+            logger.debug { "POST $url, $body, $headers" }
 
             runScriptCatching {
-                // 【严谨修改】增加 try-catch 保护
                 val resp: Response = try {
                     Net.post(url.toString()) {
                         headers?.forEach {
@@ -162,6 +157,5 @@ class GlobalHttp : ScriptableObject() {
             }
         }
     }
-
     override fun getClassName(): String = "Http"
 }
