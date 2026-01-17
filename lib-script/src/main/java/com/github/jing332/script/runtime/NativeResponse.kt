@@ -100,20 +100,20 @@ class NativeResponse private constructor(val rawResponse: Response? = null) :
             return obj
         }
 
-        // 修改：移除异常抛出，防止脚本层读取错误响应时导致 APP 闪退
+        // 【关键恢复】如果不是 200 OK，抛出异常。
+        // 这会中断后续流程，确保 Bad Audio 错误不会发生，且 SystemTtsService 会捕获到明确的网络错误。
         private fun NativeResponse.checkResponse(force: Boolean): Response {
             val resp = rawResponse ?: throw IllegalStateException("rawResponse is null")
-            // 原逻辑：if (force) return resp; if (resp.isSuccessful) return resp; else throw Exception(...)
-            // 修改后：直接返回 resp。允许脚本读取 404/500/503 的响应体内容。
-            // 脚本应通过 .ok 或 .status 属性判断请求是否成功。
-            return resp
+            if (force) return resp
+            if (resp.isSuccessful == true)
+                return resp
+            else
+                throw Exception("Response failed: code=${resp.code}, message=${resp.message}")
         }
 
         private fun NativeResponse.js_json(force: Boolean): Any = runScriptCatching {
             val resp = checkResponse(force)
             val str = resp.body?.string() ?: return@runScriptCatching ""
-            // 如果返回的是空字符串（比如网络错误没内容），parseValue可能会报错，这里脚本层可能需要try-catch，但至少不会闪退
-            if (str.isEmpty()) return@runScriptCatching Undefined.instance
             JsonParser(Context.getCurrentContext(), this).parseValue(str)
         }
 
