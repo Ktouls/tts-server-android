@@ -69,6 +69,7 @@ import com.github.michaelbull.result.onFailure
 import com.github.michaelbull.result.onSuccess
 import com.github.michaelbull.result.runCatching
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -341,7 +342,17 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 callback.done()
                 return@runBlocking
             }.value
-            synthesizerJob = mScope.launch {
+
+            // 【严谨修改】这里添加了 CoroutineExceptionHandler
+            // 它是协程的最后一道防线。当 GlobalHttp 抛出异常，NativeResponse 传递异常时，
+            // 只有这里能接住，确保 APP 不闪退，并正确回调 ERROR_SYNTHESIS
+            val exceptionHandler = CoroutineExceptionHandler { _, e ->
+                logE("Synthesize Crash Caught: ${e.message}", e)
+                callback.error(TextToSpeech.ERROR_SYNTHESIS)
+                callback.done()
+            }
+
+            synthesizerJob = mScope.launch(exceptionHandler) {
                 try {
                     mTtsManager?.synthesize(
                         params = SystemParams(text = request.charSequenceText.toString()),
@@ -409,45 +420,20 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         callback.done()
     }
 
-    // 修改：增加错误文本检测和异常抛出，防止 Bad audio format 0 并解决重连无反应问题
     private fun writeToCallBack(
         callback: android.speech.tts.SynthesisCallback,
         pcmData: ByteArray,
     ) {
         try {
-            // 新增：如果 GlobalHttp 为了防闪退返回了错误文本（而不是音频），这里会收到很短的数据
-            // 我们检查它是否是错误信息。如果是，必须抛出异常，让上层 MixSynthesizer 知道失败了。
-            if (pcmData.size < 1024) { 
-                val str = String(pcmData)
-                // 常见的网络错误关键词（对应 GlobalHttp/OkHttp 返回的 message）
-                if (str.contains("Unable to resolve") || 
-                    str.contains("Network Error") || 
-                    str.contains("failed") || 
-                    str.contains("503")) {
-                    
-                    // 这里抛出异常后，会被下方的 catch 捕获并再次抛出
-                    // 最终被 onSynthesizeText 里的 try-catch 捕获，正确报告 TextToSpeech.ERROR_SYNTHESIS
-                    throw IllegalStateException("Network Error captured in audio stream: $str")
-                }
-            }
-
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
             while (offset < pcmData.size && mTtsManager!!.isSynthesizing) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
-                val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
-                
-                // 如果系统回调返回错误，也应该停止
-                if (ret == TextToSpeech.ERROR) {
-                     throw IllegalStateException("TextToSpeech callback returned ERROR")
-                }
+                callback.audioAvailable(pcmData, offset, bytesToWrite)
                 offset += bytesToWrite
             }
         } catch (e: Exception) {
-            logE("writeToCallBack error: ${e.message}")
-            // 关键修改：原代码这里只是 log，导致上层以为成功了。
-            // 现在必须抛出异常，中断合成流程，触发重试或状态重置。
-            throw e 
+            logE("writeToCallBack: ${e.toString()}")
         }
     }
 
