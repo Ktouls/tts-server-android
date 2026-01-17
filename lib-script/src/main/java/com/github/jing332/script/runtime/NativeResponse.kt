@@ -100,8 +100,9 @@ class NativeResponse private constructor(val rawResponse: Response? = null) :
             return obj
         }
 
-        // 【关键恢复】如果不是 200 OK，抛出异常。
-        // 这会中断后续流程，确保 Bad Audio 错误不会发生，且 SystemTtsService 会捕获到明确的网络错误。
+        // 【关键逻辑】严厉检查。
+        // 如果 HTTP 状态码表示失败，立即抛出异常。
+        // 这确保了只有真正的音频数据才会被后续流程处理，避免脏缓存。
         private fun NativeResponse.checkResponse(force: Boolean): Response {
             val resp = rawResponse ?: throw IllegalStateException("rawResponse is null")
             if (force) return resp
