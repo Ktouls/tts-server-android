@@ -46,8 +46,7 @@ class GlobalHttp : ScriptableObject() {
             val url = args[0] as CharSequence
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
-            // 【关键恢复】去掉 try-catch，让异常直接抛出。
-            // 这样 SystemTtsService 才能捕获到真正的网络错误，而不是收到一个假的成功响应。
+            // 【严谨恢复】直接请求，不拦截异常，让 SystemTtsService 去处理
             runScriptCatching {
                 val resp = Net.get(url.toString()) {
                     headers?.forEach {
@@ -118,7 +117,7 @@ class GlobalHttp : ScriptableObject() {
                 "POST $url, $body, $headers"
             }
 
-            // 【关键恢复】去掉 try-catch，让异常直接抛出。
+            // 【严谨恢复】直接请求，不拦截异常
             runScriptCatching {
                 val resp: Response = Net.post(url.toString()) {
                     headers?.forEach {
