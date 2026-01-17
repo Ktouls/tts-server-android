@@ -8,9 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect // 新增
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key // 新增
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,7 +47,6 @@ class PluginTtsUI : IConfigUI() {
         const val TAG = "PluginTtsUI"
     }
 
-    // ... ParamsEditScreen 保持不变 ...
     @Composable
     override fun ParamsEditScreen(
         modifier: Modifier,
@@ -101,7 +100,6 @@ class PluginTtsUI : IConfigUI() {
         }
     }
 
-    // ... FullEditScreen 保持不变 ...
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun FullEditScreen(
@@ -119,7 +117,7 @@ class PluginTtsUI : IConfigUI() {
             onSave = onSave,
         ) {
             content()
-            EditContentScreen(systts = systemTts, onSysttsChange = onSystemTtsChange,)
+            EditContentScreen(systts = systemTts, onSysttsChange = onSystemTtsChange)
         }
     }
 
@@ -140,7 +138,6 @@ class PluginTtsUI : IConfigUI() {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
 
-        // 1. 初始化时加载插件列表
         LaunchedEffect(Unit) {
             vm.loadPluginList()
         }
@@ -178,10 +175,8 @@ class PluginTtsUI : IConfigUI() {
                         ),
                     )
                 )
-
                 true
-            } else
-                false
+            } else false
         }
 
         var showLoadingDialog by remember { mutableStateOf(false) }
@@ -189,7 +184,6 @@ class PluginTtsUI : IConfigUI() {
             LoadingDialog(onDismissRequest = { showLoadingDialog = false })
 
         var showAuditionDialog by remember { mutableStateOf(false) }
-        @Suppress("UNCHECKED_CAST")
         if (showAuditionDialog)
             AuditionDialog(
                 systts = systts,
@@ -220,17 +214,16 @@ class PluginTtsUI : IConfigUI() {
                     }
                 )
 
-                // 2. 新增: 插件选择器
                 AppSpinner(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
-                    labelText = stringResource(R.string.plugin), // 确保 R.string.plugin 存在，或者暂时用 "Plugin"
+                    labelText = stringResource(R.string.plugin),
                     value = tts.pluginId,
                     values = vm.pluginList.map { it.pluginId },
                     entries = vm.pluginList.map { it.name },
                     onSelectedChange = { id, _ ->
-                        // 切换插件时，重置 locale 和 voice，触发重载
+                        if (id == tts.pluginId) return@AppSpinner
                         onSysttsChange(
                             systts.copy(
                                 config = (systts.config as TtsConfigurationDTO).copy(
@@ -245,9 +238,18 @@ class PluginTtsUI : IConfigUI() {
                     }
                 )
 
-                // 3. 使用 key 包裹动态内容
-                // 当 tts.pluginId 变化时，强制销毁并重新创建内部组件，从而重新触发 vm.load
                 key(tts.pluginId) {
+                    // 修复点 1：将 load 逻辑移出 AndroidView，确保 isLoading 状态控制正确
+                    val customViewLayout = remember { LinearLayout(context).apply { orientation = LinearLayout.VERTICAL } }
+                    
+                    LaunchedEffect(tts.pluginId) {
+                        runCatching {
+                            vm.load(context, plugin, tts, customViewLayout)
+                        }.onFailure {
+                            context.displayErrorDialog(it)
+                        }
+                    }
+
                     LoadingContent(isLoading = vm.isLoading) {
                         Column {
                             AppSpinner(
@@ -259,13 +261,12 @@ class PluginTtsUI : IConfigUI() {
                                 values = vm.locales.map { it.first },
                                 entries = vm.locales.map { it.second },
                                 onSelectedChange = { locale, _ ->
-                                    Log.d("PluginTtsUI", "locale onSelectedChange: $locale")
-                                    if (locale.toString().isBlank()) return@AppSpinner
+                                    // 修复点 2：增加相等检查，防止初始化时列表刷新导致的错误重置
+                                    if (locale.toString().isBlank() || locale == tts.locale) return@AppSpinner
+                                    
                                     onSysttsChange(systts.copySource(tts.copy(locale = locale.toString())))
-                                    runCatching {
-                                        scope.launch(Dispatchers.IO) {
-                                            vm.updateVoices(locale.toString())
-                                        }
+                                    scope.launch(Dispatchers.IO) {
+                                        vm.updateVoices(locale.toString())
                                     }
                                 },
                             )
@@ -280,6 +281,9 @@ class PluginTtsUI : IConfigUI() {
                                 entries = vm.voices.map { it.name },
                                 icons = vm.voices.map { it.icon },
                                 onSelectedChange = { voice, name ->
+                                    // 修复点 3：核心修复。如果是初始化加载或值未变，严禁更新 state
+                                    if (voice == tts.voice || vm.isLoading) return@AppSpinner
+
                                     val lastName = vm.voices.find { it.id == tts.voice }?.name ?: ""
                                     onSysttsChange(
                                         systts.copy(
@@ -287,15 +291,13 @@ class PluginTtsUI : IConfigUI() {
                                             if (systts.displayName.isNullOrBlank() || lastName == systts.displayName) name
                                             else systts.displayName,
                                             config = (systts.config as TtsConfigurationDTO).copy(
-                                                source = tts.copy(
-                                                    voice = voice as String
-                                                )
+                                                source = tts.copy(voice = voice as String)
                                             )
                                         )
                                     )
 
                                     runCatching {
-                                        vm.updateCustomUI(tts.locale, voice)
+                                        vm.updateCustomUI(tts.locale, voice as String)
                                     }.onFailure {
                                         context.displayErrorDialog(it)
                                     }
@@ -304,26 +306,11 @@ class PluginTtsUI : IConfigUI() {
                                 }
                             )
 
-                            val scope = rememberCoroutineScope()
-                            suspend fun load(linearLayout: LinearLayout) {
-                                runCatching {
-                                    vm.load(context, plugin, tts, linearLayout)
-                                }.onFailure {
-                                    it.printStackTrace()
-                                    context.displayErrorDialog(it)
-                                }
-                            }
-
                             AndroidView(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .animateContentSize(),
-                                factory = {
-                                    LinearLayout(it).apply {
-                                        orientation = LinearLayout.VERTICAL
-                                        scope.launch { load(this@apply) }
-                                    }
-                                }
+                                factory = { customViewLayout }
                             )
                         }
                     }
@@ -335,7 +322,7 @@ class PluginTtsUI : IConfigUI() {
                     .fillMaxWidth()
                     .padding(top = 16.dp),
                 systemTts = systts,
-                onSystemTtsChange = onSysttsChange
+                onSystemTtsChange = onSystemTtsChange
             )
         }
     }
