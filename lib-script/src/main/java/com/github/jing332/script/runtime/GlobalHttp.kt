@@ -17,7 +17,7 @@ import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 import java.io.File
-import java.util.concurrent.TimeUnit // 【必须引入这个】
+import java.util.concurrent.TimeUnit
 
 class GlobalHttp : ScriptableObject() {
     companion object {
@@ -55,7 +55,6 @@ class GlobalHttp : ScriptableObject() {
         }
 
         // 【核心修复】自动重试机制
-        // 专门解决：1. 断网闪退  2. 15秒超时报错
         private fun executeWithRetry(url: String, block: () -> Response): Response {
             var currentRetry = 0
             var lastError: Exception? = null
@@ -101,15 +100,10 @@ class GlobalHttp : ScriptableObject() {
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
             runScriptCatching {
+                // 使用重试逻辑包裹，移除不兼容的 timeout 设置
                 val resp = executeWithRetry(url.toString()) {
                     Net.get(url.toString()) {
                         headers?.forEach { setHeader(it.key.toString(), it.value.toString()) }
-                        
-                        // 【关键修改】显式设置底层超时时间为 30秒
-                        // 覆盖默认的 10秒/15秒，防止底层过早报错
-                        setConnectTimeout(30, TimeUnit.SECONDS)
-                        setReadTimeout(30, TimeUnit.SECONDS)
-                        setWriteTimeout(30, TimeUnit.SECONDS)
                     }.execute<Response>()
                 }
                 NativeResponse.of(cx, scope, resp)
@@ -160,14 +154,10 @@ class GlobalHttp : ScriptableObject() {
             val contentType = headers?.get("Content-Type")?.toString()?.toMediaType()
 
             runScriptCatching {
+                // 使用重试逻辑包裹，移除不兼容的 timeout 设置
                 val resp = executeWithRetry(url.toString()) {
                     Net.post(url.toString()) {
                         headers?.forEach { setHeader(it.key.toString(), it.value.toString()) }
-                        
-                        // 【关键修改】同样延长 POST 的超时时间
-                        setConnectTimeout(30, TimeUnit.SECONDS)
-                        setReadTimeout(30, TimeUnit.SECONDS)
-                        setWriteTimeout(30, TimeUnit.SECONDS)
 
                         if (body is CharSequence)
                             this.body = body.toString().toRequestBody(contentType)
