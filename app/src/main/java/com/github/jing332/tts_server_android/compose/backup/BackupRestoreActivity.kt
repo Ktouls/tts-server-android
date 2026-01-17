@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.compose.setContent // 👈 修正：必须是 .compose.setContent
+import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -19,7 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewModelScope // 👈 用于修复 CompositionCancellationException
+import androidx.lifecycle.viewModelScope
 import com.github.jing332.common.utils.FileUtils.readBytes
 import com.github.jing332.compose.widgets.AppDialog
 import com.github.jing332.compose.widgets.LoadingDialog
@@ -42,7 +42,7 @@ class BackupRestoreActivity : ComposeActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { // 现在这里可以正确识别了
+        setContent {
             AppTheme {
                 val vm: BackupRestoreViewModel = viewModel()
                 var showBackupDialog by remember { mutableStateOf(false) }
@@ -56,7 +56,6 @@ class BackupRestoreActivity : ComposeActivity() {
 
                 if (showBackupDialog) BackupDialog(onDismissRequest = { showBackupDialog = false })
 
-                // 恢复菜单改为 MD3 居中弹窗
                 if (showRestoreMenu) {
                     AlertDialog(
                         onDismissRequest = { showRestoreMenu = false },
@@ -68,7 +67,10 @@ class BackupRestoreActivity : ComposeActivity() {
                                     result?.second?.let { uri -> showFromFileRestoreDialog.value = uri.readBytes(this@BackupRestoreActivity) }
                                 }
                                 ListItem(
-                                    modifier = Modifier.clickable { filePicker.launch(FilePickerActivity.RequestSelectFile()) },
+                                    modifier = Modifier.clickable { 
+                                        // 🛠️ 修复：传入 ZIP 专用 MIME 类型，确保系统选择器可以选中 ZIP 文件
+                                        filePicker.launch(FilePickerActivity.RequestSelectFile(listOf("application/zip", "application/x-zip-compressed"))) 
+                                    },
                                     headlineContent = { Text(stringResource(R.string.file_picker_mode_system)) },
                                     leadingContent = { Icon(Icons.Default.FolderOpen, null) },
                                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -114,7 +116,6 @@ class BackupRestoreActivity : ComposeActivity() {
                                 if (url.isBlank()) return@TextButton
                                 showUrlInputDialog = false
                                 isLoading = true
-                                // 关键修复：使用 vm.viewModelScope 彻底解决 CompositionCancellationException
                                 vm.viewModelScope.launch {
                                     runCatching {
                                         val bytes = vm.downloadFromUrl(url)
