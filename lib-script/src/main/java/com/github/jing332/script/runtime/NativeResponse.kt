@@ -100,21 +100,19 @@ class NativeResponse private constructor(val rawResponse: Response? = null) :
             return obj
         }
 
-        // 【关键逻辑】严厉检查模式。
-        // 如果 GlobalHttp 返回了 503 (代表网络错误)，这里必须抛出异常。
-        // 异常会被 SystemTtsService 捕获，从而触发重试，避免缓存错误文件。
+        // 【修改：不再抛出异常】
+        // 为了防止子线程崩溃导致 APP 闪退，这里我们不再 throw Exception。
+        // 而是直接返回 response，即使它是 503。
+        // 我们会在 SystemTtsService 中拦截这个错误的响应内容。
         private fun NativeResponse.checkResponse(force: Boolean): Response {
             val resp = rawResponse ?: throw IllegalStateException("rawResponse is null")
-            if (force) return resp
-            if (resp.isSuccessful == true)
-                return resp
-            else
-                throw Exception("Response failed: code=${resp.code}, message=${resp.message}")
+            return resp
         }
 
         private fun NativeResponse.js_json(force: Boolean): Any = runScriptCatching {
             val resp = checkResponse(force)
             val str = resp.body?.string() ?: return@runScriptCatching ""
+            // 如果是 503 错误，这里可能会解析失败，但 runScriptCatching 会接住它，不会闪退
             JsonParser(Context.getCurrentContext(), this).parseValue(str)
         }
 
