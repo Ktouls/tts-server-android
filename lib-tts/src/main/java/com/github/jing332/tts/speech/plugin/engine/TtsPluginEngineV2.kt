@@ -86,10 +86,22 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         }
     }
 
+    private val mMutex by lazy { Mutex() }
+
+    private suspend fun getAudioV2(request: Map<String, Any>): InputStream {
+        val ins = JsBridgeInputStream()
+        // 🛠️ 修复：在 runInterruptible 外面获取回调，因为它是一个 suspend 函数
+        val callback = ins.getCallback(mMutex) 
+        val result = runInterruptible {
+            engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, callback)
+                ?: throw NoSuchMethodException("getAudioV2() not found")
+        }
+        return handleAudioResult(result) ?: ins
+    }
+
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
         
-        // 🛠️ 关键修复：捕获 JavaScriptException（如 16882.png 中的超时）防止闪退
         return try {
             val result = try {
                 runInterruptible {
@@ -97,8 +109,8 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 }
             } catch (_: NoSuchMethodException) {
                 val request = mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p)
-                val ins = JsBridgeInputStream()
-                runInterruptible { engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, ins.getCallback(Mutex())) }
+                // 🛠️ 修复：这里直接返回 getAudioV2 的流
+                return getAudioV2(request)
             }
             handleAudioResult(result) ?: EmptyInputStream
         } catch (e: Exception) {
