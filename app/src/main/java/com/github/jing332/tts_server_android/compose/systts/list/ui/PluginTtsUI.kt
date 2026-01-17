@@ -117,7 +117,7 @@ class PluginTtsUI : IConfigUI() {
             onSave = onSave,
         ) {
             content()
-            EditContentScreen(systts = systemTts, onSysttsChange = onSystemTtsChange)
+            EditContentScreen(systts = systemTts, onSysttsChange = onSystemTtsChange,)
         }
     }
 
@@ -175,8 +175,10 @@ class PluginTtsUI : IConfigUI() {
                         ),
                     )
                 )
+
                 true
-            } else false
+            } else
+                false
         }
 
         var showLoadingDialog by remember { mutableStateOf(false) }
@@ -184,6 +186,7 @@ class PluginTtsUI : IConfigUI() {
             LoadingDialog(onDismissRequest = { showLoadingDialog = false })
 
         var showAuditionDialog by remember { mutableStateOf(false) }
+        @Suppress("UNCHECKED_CAST")
         if (showAuditionDialog)
             AuditionDialog(
                 systts = systts,
@@ -218,7 +221,7 @@ class PluginTtsUI : IConfigUI() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
-                    labelText = stringResource(R.string.plugin),
+                    labelText = stringResource(R.string.plugin), 
                     value = tts.pluginId,
                     values = vm.pluginList.map { it.pluginId },
                     entries = vm.pluginList.map { it.name },
@@ -239,13 +242,13 @@ class PluginTtsUI : IConfigUI() {
                 )
 
                 key(tts.pluginId) {
-                    // 修复点 1：将 load 逻辑移出 AndroidView，确保 isLoading 状态控制正确
                     val customViewLayout = remember { LinearLayout(context).apply { orientation = LinearLayout.VERTICAL } }
                     
                     LaunchedEffect(tts.pluginId) {
                         runCatching {
                             vm.load(context, plugin, tts, customViewLayout)
                         }.onFailure {
+                            it.printStackTrace()
                             context.displayErrorDialog(it)
                         }
                     }
@@ -261,12 +264,13 @@ class PluginTtsUI : IConfigUI() {
                                 values = vm.locales.map { it.first },
                                 entries = vm.locales.map { it.second },
                                 onSelectedChange = { locale, _ ->
-                                    // 修复点 2：增加相等检查，防止初始化时列表刷新导致的错误重置
+                                    Log.d("PluginTtsUI", "locale onSelectedChange: $locale")
                                     if (locale.toString().isBlank() || locale == tts.locale) return@AppSpinner
-                                    
                                     onSysttsChange(systts.copySource(tts.copy(locale = locale.toString())))
-                                    scope.launch(Dispatchers.IO) {
-                                        vm.updateVoices(locale.toString())
+                                    runCatching {
+                                        scope.launch(Dispatchers.IO) {
+                                            vm.updateVoices(locale.toString())
+                                        }
                                     }
                                 },
                             )
@@ -281,7 +285,6 @@ class PluginTtsUI : IConfigUI() {
                                 entries = vm.voices.map { it.name },
                                 icons = vm.voices.map { it.icon },
                                 onSelectedChange = { voice, name ->
-                                    // 修复点 3：核心修复。如果是初始化加载或值未变，严禁更新 state
                                     if (voice == tts.voice || vm.isLoading) return@AppSpinner
 
                                     val lastName = vm.voices.find { it.id == tts.voice }?.name ?: ""
@@ -291,7 +294,9 @@ class PluginTtsUI : IConfigUI() {
                                             if (systts.displayName.isNullOrBlank() || lastName == systts.displayName) name
                                             else systts.displayName,
                                             config = (systts.config as TtsConfigurationDTO).copy(
-                                                source = tts.copy(voice = voice as String)
+                                                source = tts.copy(
+                                                    voice = voice as String
+                                                )
                                             )
                                         )
                                     )
