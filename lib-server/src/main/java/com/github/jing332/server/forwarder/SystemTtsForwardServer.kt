@@ -43,30 +43,28 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
                 )
             }
 
-
             routing {
                 staticResources("/", "forwarder")
 
-                suspend fun RoutingContext.handleTts(
-                    params: TtsParams,
-                ) {
-                    val file = callback.tts(params)
-                    if (file == null) {
-                        call.application.log.error("[InternalServerError] Android TTS Engine Error")
-                        call.respond(HttpStatusCode.InternalServerError, "Android TTS Engine Error")
-                    } else {
-                        call.application.log.info("[OK] Android TTS Engine OK")
-
-                        call.respondOutputStream(
-                            ContentType.parse("audio/x-wav"),
-                            HttpStatusCode.OK,
-                            contentLength = file.length()
-                        ) {
-                            file.inputStream().use {
-                                it.copyTo(this)
+                suspend fun RoutingContext.handleTts(params: TtsParams) {
+                    // 🛠️ 关键修复：增加 runCatching 确保脚本错误不杀掉 Service 进程
+                    runCatching {
+                        val file = callback.tts(params)
+                        if (file == null) {
+                            call.respond(HttpStatusCode.InternalServerError, "Android TTS Engine Error")
+                        } else {
+                            call.respondOutputStream(
+                                ContentType.parse("audio/x-wav"),
+                                HttpStatusCode.OK,
+                                contentLength = file.length()
+                            ) {
+                                file.inputStream().use { it.copyTo(this) }
+                                file.delete()
                             }
-                            file.delete()
                         }
+                    }.onFailure { t ->
+                        Log.e("ForwardServer", "TTS Synthesis Error", t)
+                        call.respond(HttpStatusCode.InternalServerError, t.message ?: "Unknown Error")
                     }
                 }
 
@@ -75,20 +73,9 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
                     val engine = call.parameters.getOrFail("engine")
                     val locale = call.parameters["locale"] ?: ""
                     val voice = call.parameters["voice"] ?: ""
-                    val speed = (call.parameters["rate"] ?: call.parameters["speed"])
-                        ?.toIntOrNull() ?: 50
+                    val speed = (call.parameters["rate"] ?: call.parameters["speed"])?.toIntOrNull() ?: 50
                     val pitch = call.parameters["pitch"]?.toIntOrNull() ?: 100
-
-                    handleTts(
-                        TtsParams(
-                            text = text,
-                            engine = engine,
-                            locale = locale,
-                            voice = voice,
-                            speed = speed,
-                            pitch = pitch
-                        )
-                    )
+                    handleTts(TtsParams(text, engine, locale, voice, speed, pitch))
                 }
 
                 post("api/tts") {
@@ -96,38 +83,26 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
                     handleTts(params)
                 }
 
-                get("api/engines") {
-                    call.respond(callback.engines())
-                }
-
+                get("api/engines") { call.respond(callback.engines()) }
                 get("api/voices") {
                     val engine = call.parameters.getOrFail("engine")
                     call.respond(callback.voices(engine))
                 }
-
                 get("api/legado") {
                     val api = call.parameters.getOrFail("api")
                     val name = call.parameters.getOrFail("name")
                     val engine = call.parameters.getOrFail("engine")
                     val voice = call.parameters["voice"] ?: ""
                     val pitch = call.parameters["pitch"] ?: "50"
-
-                    call.respond(
-                        LegadoUtils.getLegadoJson(api, name, engine, voice, pitch)
-                    )
+                    call.respond(LegadoUtils.getLegadoJson(api, name, engine, voice, pitch))
                 }
-
             }
         }
     }
 
     override fun start(wait: Boolean, onStarted: () -> Unit, onStopped: () -> Unit) {
-        ktor.application.monitor.subscribe(ApplicationStarted) { application ->
-            onStarted()
-        }
-        ktor.application.monitor.subscribe(ApplicationStopped) { application ->
-            onStopped()
-        }
+        ktor.application.monitor.subscribe(ApplicationStarted) { onStarted() }
+        ktor.application.monitor.subscribe(ApplicationStopped) { onStopped() }
         ktor.start(wait)
     }
 
@@ -136,10 +111,7 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
     }
 
     interface Callback : BaseCallback {
-        suspend fun tts(
-            params: TtsParams,
-        ): File?
-
+        suspend fun tts(params: TtsParams): File?
         suspend fun voices(engine: String): List<Voice>
         suspend fun engines(): List<Engine>
     }
