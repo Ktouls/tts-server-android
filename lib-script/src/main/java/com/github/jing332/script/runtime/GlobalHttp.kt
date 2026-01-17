@@ -6,9 +6,12 @@ import com.github.jing332.script.exception.runScriptCatching
 import io.github.oshai.kotlinlogging.KotlinLogging
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
+import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
@@ -34,6 +37,17 @@ class GlobalHttp : ScriptableObject() {
             if (sealed) obj.sealObject()
         }
 
+        // 新增：构建错误响应的辅助方法，避免崩溃
+        private fun returnErrorResponse(url: String, e: Exception): Response {
+            val msg = e.message ?: "Unknown Error"
+            return Response.Builder()
+                .request(Request.Builder().url(url).build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(503) // 使用 503 Service Unavailable 表示网络错误
+                .message(msg)
+                .body(msg.toResponseBody(null))
+                .build()
+        }
 
         @Suppress("UNCHECKED_CAST")
         @JvmStatic
@@ -47,11 +61,17 @@ class GlobalHttp : ScriptableObject() {
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
             runScriptCatching {
-                val resp = Net.get(url.toString()) {
-                    headers?.forEach {
-                        setHeader(it.key.toString(), it.value.toString())
-                    }
-                }.execute<Response>()
+                val resp = try {
+                    Net.get(url.toString()) {
+                        headers?.forEach {
+                            setHeader(it.key.toString(), it.value.toString())
+                        }
+                    }.execute<Response>()
+                } catch (e: Exception) {
+                    // 捕获所有网络异常，防止闪退
+                    logger.error(e) { "Get request failed: $url" }
+                    returnErrorResponse(url.toString(), e)
+                }
                 NativeResponse.of(cx, scope, resp)
             }
         }
@@ -117,19 +137,25 @@ class GlobalHttp : ScriptableObject() {
             }
 
             runScriptCatching {
-                val resp: Response = Net.post(url.toString()) {
-                    headers?.forEach {
-                        setHeader(it.key.toString(), it.value.toString())
-                    }
-                    if (body is CharSequence)
-                        this.body = body.toString().toRequestBody(contentType)
-                    else if (body is Map<*, *>)
-                        this.body = postMultipart(
-                            "multipart/form-data",
-                            body as Map<CharSequence, Any>
-                        ).build()
+                val resp: Response = try {
+                    Net.post(url.toString()) {
+                        headers?.forEach {
+                            setHeader(it.key.toString(), it.value.toString())
+                        }
+                        if (body is CharSequence)
+                            this.body = body.toString().toRequestBody(contentType)
+                        else if (body is Map<*, *>)
+                            this.body = postMultipart(
+                                "multipart/form-data",
+                                body as Map<CharSequence, Any>
+                            ).build()
 
-                }.execute()
+                    }.execute()
+                } catch (e: Exception) {
+                    // 捕获所有网络异常，防止闪退
+                    logger.error(e) { "Post request failed: $url" }
+                    returnErrorResponse(url.toString(), e)
+                }
                 NativeResponse.of(cx, scope, resp)
             }
         }
