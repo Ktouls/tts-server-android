@@ -54,6 +54,11 @@ import com.github.jing332.tts_server_android.compose.MainActivity
 import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SystemNotificationConst
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_CANCEL
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_KILL_PROCESS
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_CONFIG
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_REPLACER
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.NOTIFICATION_CHAN_ID
 import com.github.jing332.tts_server_android.service.systts.help.TextProcessor
 import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
@@ -70,7 +75,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import splitties.init.appCtx
 import splitties.systemservices.notificationManager
 import java.nio.charset.StandardCharsets
@@ -291,8 +295,8 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
     private lateinit var mCurrentText: String
     private var synthesizerJob: Job? = null
     private var mNotificationJob: Job? = null
-    
-    // 🛠️ 关键修复：跟踪上一个 callback，确保能在死锁时强制结案
+
+    // 🛠️ 记录上一个回调，用于在卡死时强行疏通队列
     private var lastTtsCallback: android.speech.tts.SynthesisCallback? = null
 
 
@@ -322,9 +326,9 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             return
         }
 
-        // 🛠️ 终极加固：杀掉旧 Job 并在系统层强制宣告旧任务失败，释放系统队列
+        // 🛠️ 强力疏通：如果新请求进来了，说明系统队列已经允许访问，立刻捅破上一个可能的僵尸任务
         onStop()
-        lastTtsCallback?.runCatching { error(TextToSpeech.ERROR_SYNTHESIS); done() }
+        lastTtsCallback?.runCatching { error(); done() }
         lastTtsCallback = callback
 
         mNotificationJob?.cancel()
@@ -345,47 +349,44 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             }.value
 
             val exceptionHandler = CoroutineExceptionHandler { _, e ->
-                Log.e(TAG, "合成崩溃: ${e.message}")
+                Log.e(TAG, "Synthesize Crash Caught: ${e.message}", e)
                 callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 callback.done()
             }
 
             synthesizerJob = mScope.launch(exceptionHandler) {
-                var hasSentAudio = false
                 try {
-                    // 🛠️ 增加一个总的保护超时（305秒），防止插件逻辑无限卡死
-                    withTimeoutOrNull(305000L) {
-                        mTtsManager?.synthesize(
-                            params = SystemParams(text = text),
-                            forceConfigId = cfgId,
-                            callback = object :
-                                com.github.jing332.tts.synthesizer.SynthesisCallback {
-                                override fun onSynthesizeStart(sampleRate: Int) {
-                                    callback.start(sampleRate, AudioFormat.ENCODING_PCM_16BIT, 1)
-                                }
-
-                                override fun onSynthesizeAvailable(audio: ByteArray) {
-                                    hasSentAudio = true
-                                    writeToCallBack(callback, audio)
-                                }
+                    mTtsManager?.synthesize(
+                        params = SystemParams(text = request.charSequenceText.toString()),
+                        forceConfigId = cfgId,
+                        callback = object :
+                            com.github.jing332.tts.synthesizer.SynthesisCallback {
+                            override fun onSynthesizeStart(sampleRate: Int) {
+                                callback.start(
+                                    /* sampleRateInHz = */ sampleRate,
+                                    /* audioFormat = */ AudioFormat.ENCODING_PCM_16BIT,
+                                    /* channelCount = */ 1
+                                )
                             }
-                        )
-                    }?.onSuccess {
-                        // 如果任务结束但由于插件“跳过”而没发过任何音频，向系统报个错
-                        if (!hasSentAudio) {
-                            Log.w(TAG, "插件跳过重试且未生成音频")
-                            callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
+
+                            override fun onSynthesizeAvailable(audio: ByteArray) {
+                                writeToCallBack(callback, audio)
+                            }
+
                         }
+                    )?.onSuccess {
+                        // 逻辑完成
                     }?.onFailure {
                         handleSynthesisError(it, callback)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "合成中断: ${e.message}")
+                    Log.e(TAG, "Synthesize Exception: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 } finally {
-                    // 🛠️ 必杀技：结案指令，彻底防止阅读 APP 重新点击播放时没反应
+                    // 🛠️ 核心加固：无论成功、超时或由于异常中断，必须给系统一个 done
+                    // 只有这样，转发器发起的下一个请求才能被系统放行
                     callback.done()
-                    lastTtsCallback = null
+                    if (lastTtsCallback == callback) lastTtsCallback = null
                 }
             }
 
@@ -417,6 +418,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 callback.error(TextToSpeech.ERROR_INVALID_REQUEST)
             }
         }
+        // done() 统一在 finally 处理
     }
 
     // 【核心修改】对暗号 + 强制抛出异常
@@ -425,23 +427,32 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         pcmData: ByteArray,
     ) {
         try {
+            // 只检测前 512 字节，避免处理大音频
             if (pcmData.size < 512) { 
+                // 使用 UTF-8 解析，确保暗号匹配正确
                 val str = String(pcmData, StandardCharsets.UTF_8)
+                
+                // 对暗号：检查是否包含 GlobalHttp 发来的 TTS_NET_ERR:
                 if (str.startsWith("TTS_NET_ERR:")) {
-                    logE("捕获网络异常暗号: $str")
+                    
+                    logE("捕获网络超时暗号(停止合成): $str")
+                    
+                    // 1. 明确向系统报告网络超时错误
                     callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
-                    // 强制抛出异常，跳过后续逻辑直达 finally
-                    throw RuntimeException("Network Error Cancel")
+                    
+                    // 2. 【强制中断】抛出异常，让协程直接进入 finally 块完成结案
+                    throw RuntimeException("Network Error Stop")
                 }
             }
 
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
+            // 🛠️ 严格检查 synthesizerJob?.isActive，确保取消时立刻停止写入
             while (offset < pcmData.size && synthesizerJob?.isActive == true) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
                 val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
                 if (ret == TextToSpeech.ERROR) {
-                    throw RuntimeException("SynthesisCallback.audioAvailable ERROR")
+                    throw RuntimeException("SynthesisCallback.audioAvailable returned ERROR")
                 }
                 offset += bytesToWrite
             }
@@ -584,7 +595,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
     private fun logI(msg: String) = logger.info(msg)
     private fun logW(msg: String) = logger.warn(msg)
     private fun logE(msg: String, throwable: Throwable? = null) {
-        updateNotification("⚠️ " + getString(R.string.error), msg)
+        updateNotification("⚠️ Error", msg)
         Log.e(TAG, msg, throwable)
 
         logger.error(msg)
