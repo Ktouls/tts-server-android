@@ -25,7 +25,8 @@ open class MixSynthesizer(
                 SynthesizerContext(
                     androidContext = appCtx,
                     logger = logger,
-                    cfg = SynthesizerConfig()
+                    // 显式初始化，确保使用的是我们修改后的默认 5 分钟超时
+                    cfg = SynthesizerConfig(requestTimeout = { 300000 }) 
                 )
             )
         }
