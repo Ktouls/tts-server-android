@@ -73,13 +73,9 @@ class SysTtsForwarderService(
                 val speed = (params.speed + 100) / 100f
                 val pitch = params.pitch / 100f
 
-                // 🛠️ 关键修复：使用 withContext(NonCancellable) 
-                // 确保即使阅读APP侧断开了HTTP连接，我们后台的 TTS 任务也能跑完（或者重试完）
-                // 这样可以防止产生“僵尸请求”霸占着 Android 系统 TTS 队列
                 return withContext(NonCancellable) {
-                    // 🛠️ 设置一个比 GlobalHttp 重试略长的总超时（310秒）
-                    // 彻底解决阅读重新点击播放无反应的问题，确保超时后自动释放资源
-                    withTimeoutOrNull(310000L) {
+                    // 🛠️ 调整为 130 秒总保护超时，确保请求在重试最终失败后能正常释放
+                    withTimeoutOrNull(130000L) {
                         Log.d(TAG, "android tts init: ${params.engine}")
                         androidTts.init(params.engine)
 
