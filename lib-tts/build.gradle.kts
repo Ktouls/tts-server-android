@@ -62,6 +62,9 @@ dependencies {
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coreKtx)
+    
+    // 👇👇👇 QuickJS 依赖 👇👇👇
+    implementation(libs.quickjs.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
