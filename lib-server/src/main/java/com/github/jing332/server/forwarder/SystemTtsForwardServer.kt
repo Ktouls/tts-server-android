@@ -12,7 +12,6 @@ import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.ApplicationStarted
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.call
-import io.ktor.server.application.log
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.http.content.staticResources
 import io.ktor.server.plugins.origin
@@ -26,12 +25,12 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.util.getOrFail
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.io.File
-import kotlinx.coroutines.withTimeoutOrNull // 引入超时控制
 
 class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
     private val ktor by lazy {
-        // 使用 CustomNetty 启动服务器
         embeddedServer(CustomNetty, port = port) {
             installPlugins()
             intercept(ApplicationCallPipeline.Call) {
@@ -46,33 +45,45 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
 
                 suspend fun RoutingContext.handleTts(params: TtsParams) {
                     try {
-                        Log.i("ForwardServer", "开始处理 TTS 请求: ${params.text.take(10)}...")
-                        
-                        // 【核心修改】
-                        // 我们在这里手动加一个 5 分钟的超长超时
-                        // 如果 callback.tts (即脚本执行) 在5分钟内没返回，我们再放弃
-                        // 这样就覆盖了任何默认的短超时
-                        val file = withTimeoutOrNull(300000L) { // 5分钟
-                             callback.tts(params)
+                        Log.i("ForwardServer", "接收请求: ${params.text.take(10)}...")
+
+                        // 【核心修改】使用 NonCancellable 保护任务
+                        // 即使阅读APP在15秒后断开连接，这里也会继续运行直到下载完成
+                        // 这样音频会被存入系统缓存。下次重试时就能直接命中缓存。
+                        val file = withContext(NonCancellable) {
+                            callback.tts(params)
                         }
 
                         if (file == null) {
-                            Log.e("ForwardServer", "TTS 失败: 脚本返回 null 或超时")
-                            call.respond(HttpStatusCode.InternalServerError, "TTS Failed or Timeout")
+                            Log.e("ForwardServer", "TTS失败: 文件为null")
+                            // 如果连接还活着，返回错误；如果已断开，这里会抛异常但无所谓了
+                            runCatching { 
+                                call.respond(HttpStatusCode.InternalServerError, "TTS Generation Failed") 
+                            }
                         } else {
-                            Log.i("ForwardServer", "TTS 成功, 文件大小: ${file.length()}")
+                            Log.i("ForwardServer", "TTS成功, 准备发送: ${file.length()} bytes")
+                            // 尝试发送音频。如果客户端已经断开，这里会抛出异常，
+                            // 但没关系，因为音频已经生成并可能被底层 SystemTtsService 缓存了。
                             call.respondOutputStream(
                                 ContentType.parse("audio/x-wav"),
                                 HttpStatusCode.OK,
                                 contentLength = file.length()
                             ) {
-                                file.inputStream().use { it.copyTo(this) }
+                                file.inputStream().use { input ->
+                                    input.copyTo(this)
+                                }
+                                // 注意：AndroidTtsEngine 生成的临时文件通常用完即删
+                                // 但 SystemTtsService 内部有自己的缓存机制 (TtsManager)
+                                // 所以这里的删除只删除了转发器的临时中转文件
                                 file.delete()
                             }
                         }
                     } catch (e: Exception) {
-                        Log.e("ForwardServer", "TTS处理异常: ${e.message}", e)
-                        call.respond(HttpStatusCode.InternalServerError, "Server Error: ${e.message}")
+                        Log.e("ForwardServer", "请求处理异常 (可能是客户端断开): ${e.message}")
+                        // 尝试返回错误，如果客户端已断开则忽略
+                        runCatching { 
+                            call.respond(HttpStatusCode.InternalServerError, "Error: ${e.message}") 
+                        }
                     }
                 }
 
@@ -86,7 +97,7 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
                         val pitch = call.parameters["pitch"]?.toIntOrNull() ?: 100
                         handleTts(TtsParams(text, engine, locale, voice, speed, pitch))
                     } catch (e: Exception) {
-                         call.respond(HttpStatusCode.BadRequest, "Params Error: ${e.message}")
+                        runCatching { call.respond(HttpStatusCode.BadRequest, "Params Error") }
                     }
                 }
 
@@ -95,7 +106,7 @@ class SystemTtsForwardServer(val port: Int, val callback: Callback) : Server {
                         val params = call.receive<TtsParams>()
                         handleTts(params)
                     } catch (e: Exception) {
-                        call.respond(HttpStatusCode.BadRequest, "Body Error: ${e.message}")
+                        runCatching { call.respond(HttpStatusCode.BadRequest, "Body Error") }
                     }
                 }
 
