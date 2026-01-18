@@ -49,7 +49,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
     fun eval() {
-        // 🛠️ 如果是 V3 脚本，直接跳过解析，走正则提取，防止 Rhino 解析 ES6 语法时崩溃
+        // 如果标记了 use quickjs，强制走正则提取，严禁交给 Rhino 解析
         if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
             extractMetadataByRegex()
             return
@@ -71,9 +71,27 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         }
     }
 
+    /**
+     * 🛠️ 严谨的正则提取：锁定在 PluginJS 对象范围内
+     */
     private fun extractMetadataByRegex() {
-        plugin.name = Regex("""name\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.name.ifEmpty { "未命名" }
-        plugin.pluginId = Regex("""id\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.pluginId.ifEmpty { "plugin_id" }
+        val code = plugin.code
+        // 寻找 PluginJS 对象定义的起始位置
+        val startIdx = code.indexOf(OBJ_PLUGIN_JS).coerceAtLeast(0)
+        // 限制搜索范围在 PluginJS 定义后的 500 个字符内，避免匹配到 voices 里的 name
+        val searchScope = code.substring(startIdx, (startIdx + 500).coerceAtMost(code.length))
+
+        plugin.name = Regex("""['"]?name['"]?\s*[:=]\s*['"](.*?)['"]""").find(searchScope)?.groupValues?.get(1) 
+            ?: plugin.name.ifEmpty { "未命名V3" }
+
+        plugin.pluginId = Regex("""['"]?id['"]?\s*[:=]\s*['"](.*?)['"]""").find(searchScope)?.groupValues?.get(1)
+            ?: plugin.pluginId.ifEmpty { "v3_default_id" }
+
+        plugin.author = Regex("""['"]?author['"]?\s*[:=]\s*['"](.*?)['"]""").find(searchScope)?.groupValues?.get(1)
+            ?: "anonymous"
+        
+        // 🛠️ 关键修复：重置默认变量，防止 UI 误显示“设置变量”
+        plugin.defVars = emptyMap()
     }
 
     fun onLoad(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_LOAD) }.getOrNull()
@@ -93,16 +111,13 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
-                    val client = OkHttpClient.Builder()
-                        .connectTimeout(300, TimeUnit.SECONDS)
-                        .readTimeout(300, TimeUnit.SECONDS)
-                        .build()
+                    val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).build()
                     val resp = client.newCall(Request.Builder().url(str).build()).execute()
-                    if (!resp.isSuccessful) throw RuntimeException("URL Fetch Error: ${resp.code}")
+                    if (!resp.isSuccessful) throw RuntimeException("URL Error: ${resp.code}")
                     resp.body?.byteStream()
                 } else throw IllegalStateException(str)
             }
-            else -> throw IllegalArgumentException("Unsupported type: ${result.javaClass.name}")
+            else -> throw IllegalArgumentException("Type: ${result.javaClass.name}")
         }
     }
 
@@ -113,7 +128,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         val callback = ins.getCallback(mMutex) 
         val result = runInterruptible {
             engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, callback)
-                ?: throw NoSuchMethodException("getAudioV2() not found")
+                ?: throw NoSuchMethodException("getAudioV2 not found")
         }
         return handleAudioResult(result) ?: ins
     }
@@ -121,9 +136,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
         val result = try {
-            runInterruptible {
-                engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
-            }
+            runInterruptible { engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p) }
         } catch (_: NoSuchMethodException) {
             return getAudioV2(mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p))
         }
