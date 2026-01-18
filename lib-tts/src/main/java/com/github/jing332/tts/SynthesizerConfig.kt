@@ -5,7 +5,9 @@ import com.github.jing332.database.entities.systts.AudioParams
 typealias ValueProvider<T> = () -> T
 
 data class SynthesizerConfig(
-    var requestTimeout: ValueProvider<Long> = { 8000 },
+    // 【修改点】默认超时从 8000 改为 300000 (5分钟)
+    // 确保全局单例在未被 UI 配置覆盖时，也有足够的配额让插件重试
+    var requestTimeout: ValueProvider<Long> = { 300000 },
     var maxRetryTimes: ValueProvider<Int> = { 1 },
     var toggleTry: ValueProvider<Int> = { 1 },
     var streamPlayEnabled: ValueProvider<Boolean> = { true },
