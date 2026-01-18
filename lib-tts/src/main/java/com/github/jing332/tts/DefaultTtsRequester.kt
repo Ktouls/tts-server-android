@@ -22,7 +22,6 @@ class DefaultTtsRequester(
                 RequesterError.StateError("engine ${tts.source} not found")
             )
 
-        // 修正：增加异常捕获，防止引擎初始化崩溃
         if (engine.state != EngineState.Initialized) {
             try {
                 engine.onInit()
@@ -41,18 +40,18 @@ class DefaultTtsRequester(
             )
         } else {
             try {
-                // 修正：增加强制超时保护，时长由配置决定，防止断网导致请求挂死
-                val timeout = (context.cfg.requestTimeout() ?: 10000).toLong()
+                // 【核心修改】确保超时时长足够长。
+                // 如果配置里没拿到底层 UI 的值，默认给 5 分钟 (300,000ms)
+                val timeout = (context.cfg.requestTimeout() ?: 300000).toLong()
                 withTimeout(timeout) {
                     Ok(
                         ITtsRequester.Response(stream = engine.getStream(params, tts.source))
                     )
                 }
             } catch (e: CancellationException) {
+                // 如果是协程主动取消，继续抛出
                 throw e
             } catch (e: Exception) {
-                // 修正：如果网络请求彻底失败，销毁当前引擎状态。
-                // 这样网络恢复后，下次请求会重新触发 onInit() 建立连接，实现自愈。
                 engine.onDestroy() 
                 Err(RequesterError.RequestError(e))
             }
