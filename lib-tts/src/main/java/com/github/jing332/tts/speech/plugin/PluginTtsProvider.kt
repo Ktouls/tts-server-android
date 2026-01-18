@@ -20,10 +20,10 @@ open class PluginTtsProvider(
     companion object {
         const val TAG = "PluginTtsProvider"
         
-        // 🚀 修正后的特征库：移除 let/const，避免误伤旧插件
-        // 只有出现 async, await, 箭头函数(=>), class, 或者显式标记时才启用 V3
-        private val ES6_FEATURES = Pattern.compile(
-            "\\b(async|await|class)\\b|=>|`", 
+        // 🚀 修正后的正则：只检测 async 和 await
+        // 移除对反引号(`)和箭头函数(=>)的检测，因为 Rhino 其实支持它们，防止误判 Azure 插件
+        private val ASYNC_FEATURES = Pattern.compile(
+            "\\b(async|await)\\b", 
             Pattern.CASE_INSENSITIVE
         )
     }
@@ -31,7 +31,6 @@ open class PluginTtsProvider(
     private var mEngine: TtsPluginEngineV2? = null
     private var mEngineV3: TtsPluginEngineV3? = null
 
-    // 保持兼容
     var engine: TtsPluginEngineV2?
         get() = mEngine
         set(value) { mEngine = value }
@@ -48,7 +47,6 @@ open class PluginTtsProvider(
                 mEngineV3!!.getAudio(params.text, source.locale, source.voice, speed, volume, pitch)
                     ?: throw IllegalStateException("QuickJS Engine returned null")
             } else {
-                // V2 回退逻辑
                 mEngine?.source = source
                 mEngine?.getAudio(params.text, source.locale, source.voice, speed, volume, pitch)
                     ?: throw IllegalStateException("Engine not initialized")
@@ -62,27 +60,27 @@ open class PluginTtsProvider(
     override suspend fun onInit() {
         state = EngineState.Initializing
 
-        // 1. 最高优先级：显式暗号 "use quickjs"
+        // 1. 显式标记 (最高优先级)
         val hasTag = plugin.code.contains("\"use quickjs\"", ignoreCase = true)
         
-        // 2. 次级优先级：检测旧引擎绝对不支持的语法 (Async/Await/箭头函数)
-        // 注意：这里去掉了对 let/const 的检测，因为 Rhino 也支持它们，防止误判
-        val hasEs6Features = ES6_FEATURES.matcher(plugin.code).find()
+        // 2. 异步特征检测 (最保守策略)
+        // 只有代码里写了 async 或 await，才认为是 V3 插件
+        val hasAsync = ASYNC_FEATURES.matcher(plugin.code).find()
 
-        if (hasTag || hasEs6Features) {
-            Log.i(TAG, "检测到现代JS语法，启用 QuickJS 引擎: ${plugin.name}")
+        if (hasTag || hasAsync) {
+            Log.i(TAG, "检测到 async/await 或标签，启用 QuickJS: ${plugin.name}")
             if (mEngineV3 == null) {
                 mEngineV3 = TtsPluginEngineManager.getV3(context, plugin)
             }
         } else {
-            // 3. 默认走老引擎 (Rhino)
+            // 3. 其他情况全部默认走 Rhino (兼容 Azure 等旧插件)
             try {
                 if (mEngine == null) {
                     mEngine = TtsPluginEngineManager.get(context, plugin)
                 }
             } catch (e: Exception) {
-                // 兜底：如果老引擎实在跑不起来，再试试新引擎
-                Log.w(TAG, "V2 引擎加载失败，尝试 V3: ${e.message}")
+                // 兜底：万一 Rhino 真的崩了，再试一次 QuickJS
+                Log.w(TAG, "V2 引擎加载失败，尝试 QuickJS 救场: ${e.message}")
                 mEngine = null
                 if (mEngineV3 == null) {
                     mEngineV3 = TtsPluginEngineManager.getV3(context, plugin)
