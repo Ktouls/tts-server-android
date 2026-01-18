@@ -25,8 +25,6 @@ class GlobalHttp : ScriptableObject() {
         private val TAG = "GlobalHttp"
         private val logger = KotlinLogging.logger(TAG)
 
-        // 重试配置：150次 * 2秒间隔 ≈ 5分钟
-        // 只要在5分钟内网络恢复，就能自动继续播放
         private const val MAX_RETRY_COUNTS = 150
         private const val RETRY_INTERVAL_MS = 2000L
 
@@ -44,7 +42,7 @@ class GlobalHttp : ScriptableObject() {
         }
 
         private fun returnErrorResponse(url: String, msg: String): Response {
-            Log.e(TAG, "重试耗尽或被强杀，返回错误: $msg")
+            Log.e(TAG, "请求终止或重试耗尽: $msg")
             return Response.Builder()
                 .request(Request.Builder().url(url).build())
                 .protocol(Protocol.HTTP_1_1)
@@ -54,38 +52,44 @@ class GlobalHttp : ScriptableObject() {
                 .build()
         }
 
-        // 【核心修复】自动重试机制
         private fun executeWithRetry(url: String, block: () -> Response): Response {
             var currentRetry = 0
             var lastError: Exception? = null
 
-            while (currentRetry < MAX_RETRY_COUNTS) {
+            // 🛠️ 关键修复：增加 !Thread.currentThread().isInterrupted 检查
+            // 确保旧任务在网络异常重试期间，如果收到取消指令，能立刻释放 Mutex 锁
+            while (currentRetry < MAX_RETRY_COUNTS && !Thread.currentThread().isInterrupted) {
                 try {
                     val resp = block()
                     if (resp.isSuccessful) {
                         if (currentRetry > 0) Log.i(TAG, "重试成功 ($currentRetry): $url")
                         return resp
                     } else {
-                        // 如果服务器返回 5xx 错误，抛出异常触发重试
                         throw RuntimeException("HTTP Code ${resp.code}")
                     }
                 } catch (e: Exception) {
+                    // 检测是否是因为任务被取消导致的异常
+                    if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                        return returnErrorResponse(url, "Interrupted")
+                    }
+
                     lastError = e
                     currentRetry++
                     
-                    // 仅在 Logcat 打印，不抛出给 APP，防止刷屏
                     if (currentRetry % 5 == 1) { 
-                        Log.w(TAG, "网络请求异常 ($currentRetry/$MAX_RETRY_COUNTS): ${e.message}. 正在重试...")
+                        Log.w(TAG, "网络异常 ($currentRetry/$MAX_RETRY_COUNTS): ${e.message}. 正在重试...")
                     }
 
                     try {
+                        // 在休眠前再次检查中断状态
+                        if (Thread.currentThread().isInterrupted) return returnErrorResponse(url, "Interrupted")
                         Thread.sleep(RETRY_INTERVAL_MS)
                     } catch (interrupted: InterruptedException) {
                         return returnErrorResponse(url, "Interrupted")
                     }
                 }
             }
-            return returnErrorResponse(url, "Max retry reached: ${lastError?.message}")
+            return returnErrorResponse(url, "Stopped or Max Retries: ${lastError?.message}")
         }
 
         @Suppress("UNCHECKED_CAST")
@@ -100,7 +104,6 @@ class GlobalHttp : ScriptableObject() {
             val headers = args.getOrNull(1) as? Map<CharSequence, CharSequence>
 
             runScriptCatching {
-                // 使用重试逻辑包裹，移除不兼容的 timeout 设置
                 val resp = executeWithRetry(url.toString()) {
                     Net.get(url.toString()) {
                         headers?.forEach { setHeader(it.key.toString(), it.value.toString()) }
@@ -154,7 +157,6 @@ class GlobalHttp : ScriptableObject() {
             val contentType = headers?.get("Content-Type")?.toString()?.toMediaType()
 
             runScriptCatching {
-                // 使用重试逻辑包裹，移除不兼容的 timeout 设置
                 val resp = executeWithRetry(url.toString()) {
                     Net.post(url.toString()) {
                         headers?.forEach { setHeader(it.key.toString(), it.value.toString()) }
