@@ -81,8 +81,8 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
-                    // 🛠️ 关键修复：当脚本返回 URL 字符串时，使用超长超时下载
-                    // 防止在断网重试期间因为底层网络库默认的 15s 限制而导致合成失败
+                    // 🛠️ 关键修复：当插件脚本返回 URL 字符串时，显式设置超长超时下载
+                    // 覆盖底层网络库默认的 15s 限制，防止在网络波动重试期间任务被强行掐断
                     Net.get(str) {
                         connectTimeout(300, TimeUnit.SECONDS)
                         readTimeout(300, TimeUnit.SECONDS)
@@ -99,6 +99,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     private suspend fun getAudioV2(request: Map<String, Any>): InputStream {
         val ins = JsBridgeInputStream()
+        // 🛠️ 修复：在 runInterruptible 外面获取回调，因为它是一个 suspend 函数
         val callback = ins.getCallback(mMutex) 
         val result = runInterruptible {
             engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, callback)
@@ -117,6 +118,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 }
             } catch (_: NoSuchMethodException) {
                 val request = mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p)
+                // 🛠️ 修复：这里直接返回 getAudioV2 的流
                 return getAudioV2(request)
             }
             handleAudioResult(result) ?: EmptyInputStream
