@@ -1,21 +1,21 @@
 name: Repair Build (One-Time)
 
 on:
-  workflow_dispatch: # 👈 仅手动触发
+  workflow_dispatch:
 
 jobs:
   build:
     strategy:
       matrix:
-        # 为了节省时间，修复时只构建 app 即可，不用跑 dev
         product: [ { name: "App原版", value: app } ]
       fail-fast: false
     runs-on: ubuntu-latest
     env:
       product: ${{ matrix.product.value }}
       outputs_dir: "${{ github.workspace }}/app/build/outputs"
-      # 保持内存限制
       GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8"
+      # 👇👇👇 关键修改：注入 GitHub Token 👇👇👇
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        # 这里的 setup-gradle 会尝试恢复缓存，但我们下面的命令会强制忽略依赖缓存
 
       - name: Init Signature
         run: |
@@ -43,7 +42,7 @@ jobs:
       - name: Repair Build with Refresh
         run: |
           chmod +x gradlew
-          # 👇 关键修改：加入了 --refresh-dependencies，去掉了 --build-cache
+          # 强制刷新依赖
           ./gradlew assemble${{ env.product }}release --refresh-dependencies --parallel --daemon --warning-mode all
 
       - name: Set Version Name
