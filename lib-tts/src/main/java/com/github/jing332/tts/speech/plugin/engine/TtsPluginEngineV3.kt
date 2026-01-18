@@ -5,16 +5,16 @@ import android.util.Base64
 import android.util.Log
 import app.cash.quickjs.QuickJs
 import com.github.jing332.database.entities.plugin.Plugin
-import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 工业级 V3 引擎：完整注入 ttsrv 环境，支持文件操作、变量访问、Async/Await 及多种返回格式
+ * 严谨版 V3 引擎：修复 FileUtils 编译错误，锁定内部文件目录
  */
 open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     companion object {
@@ -29,16 +29,14 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    // 严谨的桥接接口，映射 ttsrv 的核心功能
+    // 严谨的桥接接口
     interface JsBridge {
         fun onSuccess(result: Any?)
         fun onError(error: String)
         fun fetch(url: String, options: String): String
-        // ttsrv 核心文件操作
         fun fileExist(path: String): Boolean
         fun readTxtFile(path: String): String
         fun writeTxtFile(path: String, content: String)
-        fun toast(msg: String)
         fun getTtsData(key: String): String
     }
 
@@ -48,43 +46,50 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     ): InputStream? = withContext(Dispatchers.IO) {
         val quickJs = QuickJs.create()
         val deferred = CompletableDeferred<Any?>()
-        val ttsSource = PluginTtsSource() // 获取当前的 TTS 配置数据
 
         try {
-            // 1. 注入 nativeBridge
+            // 1. 注入 nativeBridge，使用标准 File API 确保编译通过
             quickJs.set("nativeBridge", JsBridge::class.java, object : JsBridge {
                 override fun onSuccess(result: Any?) { deferred.complete(result) }
                 override fun onError(error: String) { deferred.completeExceptionally(RuntimeException(error)) }
+                
                 override fun fetch(url: String, options: String): String {
                     return try {
                         val reqBuilder = Request.Builder().url(url).header("User-Agent", DEFAULT_UA)
                         if (options.contains("POST")) {
-                            // 简易 Body 提取
                             val body = Regex(""""body"\s*:\s*"(.*?)"""").find(options)?.groupValues?.get(1) ?: ""
                             reqBuilder.post(okhttp3.RequestBody.create(null, body))
                         }
                         client.newCall(reqBuilder.build()).execute().body?.string() ?: ""
                     } catch (e: Exception) { "ERROR: ${e.message}" }
                 }
-                override fun fileExist(path: String): Boolean = com.github.jing332.common.utils.FileUtils.exists(context, path)
-                override fun readTxtFile(path: String): String = com.github.jing332.common.utils.FileUtils.readText(context, path)
-                override fun writeTxtFile(path: String, content: String) { com.github.jing332.common.utils.FileUtils.saveText(context, path, content) }
-                override fun toast(msg: String) { /* 宿主环境 Toast 逻辑 */ }
+
+                // 使用 context.filesDir 确保路径安全性与 ES5 引擎一致
+                override fun fileExist(path: String): Boolean = File(context.filesDir, path).exists()
+                override fun readTxtFile(path: String): String = File(context.filesDir, path).let { 
+                    if (it.exists()) it.readText() else "" 
+                }
+                override fun writeTxtFile(path: String, content: String) { 
+                    File(context.filesDir, path).writeText(content) 
+                }
+                
                 override fun getTtsData(key: String): String = plugin.userVars[key] ?: ""
             })
 
-            // 2. 在 JS 中模拟 ttsrv 对象结构
-            val ttsDataJson = plugin.userVars.filterKeys { it == "bv" }.let { "{\"bv\": \"${it["bv"] ?: ""}\"}" }
+            // 2. 环境初始化 (注入 ttsrv 模拟对象)
+            val bvValue = plugin.userVars["bv"] ?: ""
+            val ttsDataJson = "{\"bv\": \"$bvValue\"}"
             
             quickJs.evaluate("""
-                const console = { log: (m) => java.lang.System.out.println("[V3] " + m) };
+                const console = { 
+                    log: (m) => java.lang.System.out.println("[V3] " + m),
+                    error: (m) => java.lang.System.err.println("[V3] " + m)
+                };
                 
-                // 🛠️ 关键注入：构造模拟的 ttsrv 对象
                 const ttsrv = {
                     fileExist: (p) => nativeBridge.fileExist(p),
                     readTxtFile: (p) => nativeBridge.readTxtFile(p),
                     writeTxtFile: (p, c) => nativeBridge.writeTxtFile(p, c),
-                    toast: (m) => nativeBridge.toast(m),
                     tts: { data: $ttsDataJson }
                 };
 
@@ -98,19 +103,22 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
             // 3. 执行插件代码
             quickJs.evaluate(plugin.code, "plugin.js")
 
-            // 4. 执行异步调用
+            // 4. 调用异步逻辑
             val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
             quickJs.evaluate("""
                 (async () => {
                     try {
+                        if (typeof $OBJ_PLUGIN_JS === 'undefined') throw new Error("$OBJ_PLUGIN_JS is not defined");
                         const res = $OBJ_PLUGIN_JS.$FUNC_GET_AUDIO("$text", "$locale", "$voice", $r, $v, $p);
                         const finalRes = (res instanceof Promise) ? await res : res;
                         nativeBridge.onSuccess(finalRes);
-                    } catch (e) { nativeBridge.onError(e.message); }
+                    } catch (e) {
+                        nativeBridge.onError(e.message);
+                    }
                 })();
             """.trimIndent())
 
-            val result = withTimeout(30000L) { deferred.await() }
+            val result = withTimeout(35000L) { deferred.await() }
             return@withContext handleResult(result)
 
         } catch (e: Exception) {
@@ -124,14 +132,18 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
         val data = result.toString().trim()
+        
         if (data.startsWith("http")) {
             val resp = client.newCall(Request.Builder().url(data).header("User-Agent", DEFAULT_UA).build()).execute()
-            return if (resp.isSuccessful) resp.body?.byteStream() else throw Exception("Download Error: ${resp.code}")
+            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code} 下载失败")
+            return resp.body?.byteStream()
         }
+
         return try {
-            ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT))
+            val audioBytes = Base64.decode(data, Base64.DEFAULT)
+            ByteArrayInputStream(audioBytes)
         } catch (e: Exception) {
-            throw Exception("Invalid Result Format: ${data.take(100)}")
+            throw Exception("返回数据格式错误 (非URL且非Base64): ${data.take(100)}")
         }
     }
 }
