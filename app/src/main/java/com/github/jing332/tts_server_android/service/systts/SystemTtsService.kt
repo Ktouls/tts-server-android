@@ -164,7 +164,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 context.androidContext = appCtx
                 context.event = this@SystemTtsService
                 context.cfg = SynthesizerConfig(
-                    requestTimeout = { 120000L }, // 🛠️ 调整为 2 分钟超时
+                    requestTimeout = { SysTtsConfig.requestTimeout.value.toLong() },
                     maxRetryTimes = { SysTtsConfig.maxRetryCount },
                     streamPlayEnabled = { SysTtsConfig.isStreamPlayModeEnabled },
                     silenceSkipEnabled = { SysTtsConfig.isSkipSilentAudio },
