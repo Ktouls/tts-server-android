@@ -54,11 +54,6 @@ import com.github.jing332.tts_server_android.compose.MainActivity
 import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SystemNotificationConst
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_CANCEL
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_KILL_PROCESS
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_CONFIG
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_REPLACER
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.NOTIFICATION_CHAN_ID
 import com.github.jing332.tts_server_android.service.systts.help.TextProcessor
 import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
@@ -323,7 +318,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             return
         }
 
-        // 🛠️ 关键修复：确保旧任务死透并释放锁
+        // 🛠️ 关键修复：确保旧任务被取消，防止队列因锁死而无法响应新播放
         onStop()
 
         mNotificationJob?.cancel()
@@ -344,7 +339,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             }.value
 
             val exceptionHandler = CoroutineExceptionHandler { _, e ->
-                logE("Synthesize Crash Caught: ${e.message}", e)
+                Log.e(TAG, "合成任务中断或异常: ${e.message}")
                 callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 callback.done()
             }
@@ -370,15 +365,16 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
 
                         }
                     )?.onSuccess {
-                        // 正常结束无需特殊处理，finally 块会处理 done()
+                        // 正常结束由 finally 块调用 done()
                     }?.onFailure {
                         handleSynthesisError(it, callback)
                     }
                 } catch (e: Exception) {
-                    logE("Synthesize Exception: ${e.message}")
+                    Log.e(TAG, "Synthesize Exception: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 } finally {
-                    // 🛠️ 终极加固：无论成功、取消、报错，都必须调用 done() 以清空系统队列
+                    // 🛠️ 结案逻辑：无论脚本如何报错或超时，必须向系统返回 done
+                    // 只有这样系统才会清空当前队列，让你“再次播放”时能够接收到新请求
                     callback.done()
                 }
             }
@@ -411,7 +407,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 callback.error(TextToSpeech.ERROR_INVALID_REQUEST)
             }
         }
-        // finally 块会处理 callback.done()
+        // done() 统一在 finally 块处理
     }
 
     // 【核心修改】对暗号 + 强制抛出异常
@@ -428,20 +424,19 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 // 对暗号：检查是否包含 GlobalHttp 发来的 TTS_NET_ERR:
                 if (str.startsWith("TTS_NET_ERR:")) {
                     
-                    logE("捕获网络错误(停止合成): $str")
+                    logE("捕获网络异常暗号: $str")
                     
-                    // 1. 明确反馈网络超时，告知阅读APP
+                    // 1. 明确告知阅读 APP 发生了网络错误
                     callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
                     
-                    // 2. 【绝杀】抛出 RuntimeException，强制中断代码执行流！
-                    // 这将阻止 MixSynthesizer 此时继续执行
-                    throw RuntimeException("Network Error Interrupt: $str")
+                    // 2. 【强制中断】抛出异常，让协程直接进入 finally 块
+                    throw RuntimeException("Network Error Stop")
                 }
             }
 
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
-            // 🛠️ 关键修复：增加 synthesizerJob?.isActive 检测，确保取消时立刻停止写入
+            // 🛠️ 严格检查 synthesizerJob?.isActive，确保取消时立刻停止写入
             while (offset < pcmData.size && synthesizerJob?.isActive == true) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
                 val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
@@ -451,7 +446,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 offset += bytesToWrite
             }
         } catch (e: Exception) {
-            throw e // 必须抛出，让上层协程感知到失败
+            throw e 
         }
     }
 
