@@ -49,9 +49,8 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
     fun eval() {
-        // 🛠️ 严谨逻辑：如果标记了使用 QuickJS，直接走正则提取，严禁交给 Rhino 解析
+        // 🛠️ 如果是 V3 脚本，直接跳过解析，走正则提取，防止 Rhino 解析 ES6 语法时崩溃
         if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
-            Log.i(TAG, "检测到 QuickJS 暗号，跳过 Rhino 解析，执行正则元数据提取")
             extractMetadataByRegex()
             return
         }
@@ -67,16 +66,14 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Rhino 解析失败，尝试兜底提取: ${e.message}")
+            Log.w(TAG, "Rhino 解析失败，执行兜底提取: ${e.message}")
             extractMetadataByRegex()
         }
     }
 
     private fun extractMetadataByRegex() {
-        // 使用更健壮的正则，支持单引号、双引号、以及属性名带或不带引号的情况
-        plugin.name = Regex("""name\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.name.ifEmpty { "未命名ES6" }
-        plugin.pluginId = Regex("""id\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.pluginId.ifEmpty { "v3_default_id" }
-        plugin.author = Regex("""author\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: "anonymous"
+        plugin.name = Regex("""name\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.name.ifEmpty { "未命名" }
+        plugin.pluginId = Regex("""id\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.pluginId.ifEmpty { "plugin_id" }
     }
 
     fun onLoad(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_LOAD) }.getOrNull()
@@ -105,7 +102,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                     resp.body?.byteStream()
                 } else throw IllegalStateException(str)
             }
-            else -> throw IllegalArgumentException("Unsupported return type: ${result.javaClass.name}")
+            else -> throw IllegalArgumentException("Unsupported type: ${result.javaClass.name}")
         }
     }
 
@@ -130,6 +127,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         } catch (_: NoSuchMethodException) {
             return getAudioV2(mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p))
         }
-        return handleAudioResult(result) ?: throw RuntimeException("Synthesis Result is Empty")
+        return handleAudioResult(result) ?: throw RuntimeException("Empty result")
     }
 }
