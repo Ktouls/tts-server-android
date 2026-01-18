@@ -14,12 +14,8 @@ dependencyResolutionManagement {
         
         maven { 
             url 'https://jitpack.io' 
-            // 👇👇👇 关键修改：黑名单机制 👇👇👇
-            content {
-                // 明确告诉 Gradle：只要是 io.github.dokar3 开头的库（即 QuickJS），
-                // 绝对不要来 JitPack 找！(防止触发 401 错误)
-                excludeGroup 'io.github.dokar3'
-            }
+            // 👇 关键修改：带上 GitHub Token 作为通行证
+            credentials { username = System.getenv("GITHUB_TOKEN") ?: 'authToken' }
         }
     }
 
