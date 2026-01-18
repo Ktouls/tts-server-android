@@ -1,7 +1,6 @@
 pluginManagement {
     includeBuild("build-logic")
     repositories {
-        // 👇 把 Maven Central 放到第一位
         mavenCentral()
         gradlePluginPortal()
         google()
@@ -10,13 +9,18 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // 👇 重点：这里也要把 Maven Central 放到第一位！
-        // 这样找到 QuickJS 后就会立刻停止，不会去撞 JitPack 的 401 墙
         mavenCentral()
         google()
         
-        // JitPack 放在最后，只给必须用的库（如 Net）兜底
-        maven { url 'https://jitpack.io' }
+        maven { 
+            url 'https://jitpack.io' 
+            // 👇👇👇 关键修改：黑名单机制 👇👇👇
+            content {
+                // 明确告诉 Gradle：只要是 io.github.dokar3 开头的库（即 QuickJS），
+                // 绝对不要来 JitPack 找！(防止触发 401 错误)
+                excludeGroup 'io.github.dokar3'
+            }
+        }
     }
 
     versionCatalogs {
