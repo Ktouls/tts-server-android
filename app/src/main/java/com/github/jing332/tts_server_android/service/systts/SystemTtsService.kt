@@ -54,11 +54,6 @@ import com.github.jing332.tts_server_android.compose.MainActivity
 import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SystemNotificationConst
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_CANCEL
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_KILL_PROCESS
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_CONFIG
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_REPLACER
-import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.NOTIFICATION_CHAN_ID
 import com.github.jing332.tts_server_android.service.systts.help.TextProcessor
 import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
@@ -168,7 +163,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 context.androidContext = appCtx
                 context.event = this@SystemTtsService
                 context.cfg = SynthesizerConfig(
-                    requestTimeout = { SysTtsConfig.requestTimeout.toLong() },
+                    requestTimeout = { 300000L },
                     maxRetryTimes = { SysTtsConfig.maxRetryCount },
                     streamPlayEnabled = { SysTtsConfig.isStreamPlayModeEnabled },
                     silenceSkipEnabled = { SysTtsConfig.isSkipSilentAudio },
@@ -322,6 +317,9 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             return
         }
 
+        // 🛠️ 关键修复：每次新任务开始，先强制杀掉旧任务并释放 Mutex 锁
+        onStop()
+
         mNotificationJob?.cancel()
         reNewWakeLock()
         startForegroundService()
@@ -371,14 +369,10 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                     }?.onFailure {
                         handleSynthesisError(it, callback)
                     }
-                } catch (e: TimeoutCancellationException) {
-                    logE("Synthesize Timeout: ${e.message}")
-                    callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
-                    callback.done()
                 } catch (e: Exception) {
-                    logE("Synthesize Exception: ${e.message}")
+                    logE("Synthesize Stopped: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    // 不要调用 done()，防止状态冲突
+                    // 任务可能被取消，不调用 done() 避免冲突
                 }
             }
 
@@ -413,35 +407,24 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         callback.done()
     }
 
-    // 【核心修改】对暗号 + 强制抛出异常
     private fun writeToCallBack(
         callback: android.speech.tts.SynthesisCallback,
         pcmData: ByteArray,
     ) {
         try {
-            // 只检测前 512 字节，避免处理大音频
             if (pcmData.size < 512) { 
-                // 使用 UTF-8 解析，确保暗号匹配正确
                 val str = String(pcmData, StandardCharsets.UTF_8)
-                
-                // 对暗号：检查是否包含 GlobalHttp 发来的 TTS_NET_ERR:
                 if (str.startsWith("TTS_NET_ERR:")) {
-                    
                     logE("捕获网络错误(停止合成): $str")
-                    
-                    // 1. 报告系统失败
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    
-                    // 2. 【绝杀】抛出 RuntimeException，强制中断代码执行流！
-                    // 这将阻止 MixSynthesizer 此时继续执行到 onSuccess -> done()
-                    // 确保系统只会收到 Error，不会收到 Done。
-                    throw RuntimeException("Network Error Interrupt: $str")
+                    throw RuntimeException("Network Error Interrupt")
                 }
             }
 
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
-            while (offset < pcmData.size && (mTtsManager?.isSynthesizing == true)) {
+            // 🛠️ 关键修复：增加 synthesizerJob?.isActive 检测，确保旧任务被杀后立即停止写入数据
+            while (offset < pcmData.size && (synthesizerJob?.isActive == true)) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
                 val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
                 if (ret == TextToSpeech.ERROR) {
@@ -451,7 +434,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             }
         } catch (e: Exception) {
             logE("writeToCallBack error: ${e.message}")
-            throw e // 必须抛出，让上层知道失败
+            throw e 
         }
     }
 
