@@ -2,11 +2,9 @@ package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
 import com.drake.net.Net
-import com.github.jing332.common.utils.limitLength
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
-import com.github.jing332.script.ensureArgumentsLength
 import com.github.jing332.script.runtime.NativeResponse
 import com.github.jing332.script.runtime.console.Console
 import com.github.jing332.script.simple.CompatScriptRuntime
@@ -14,21 +12,16 @@ import com.github.jing332.script.source.toScriptSource
 import com.github.jing332.tts.speech.EmptyInputStream
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
-import okhttp3.OkHttpClient // 【新增】引入原生 OkHttpClient
-import okhttp3.Request // 【新增】引入原生 Request
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.Response
-import okhttp3.ResponseBody
-import org.mozilla.javascript.Callable
-import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 import org.mozilla.javascript.Undefined
 import org.mozilla.javascript.typedarrays.NativeArrayBuffer
 import org.mozilla.javascript.typedarrays.NativeTypedArrayView
 import java.io.ByteArrayInputStream
 import java.io.InputStream
-import java.io.PipedInputStream
-import java.io.PipedOutputStream
-import java.util.concurrent.TimeUnit // 【新增】引入时间单位
+import java.util.concurrent.TimeUnit
 
 open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     companion object {
@@ -45,7 +38,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     protected val ttsrv = TtsEngineContext(PluginTtsSource(), plugin.userVars, context, plugin.pluginId)
     val runtime = CompatScriptRuntime(ttsrv)
-
     var source: PluginTtsSource
         get() = ttsrv.tts
         set(value) { ttsrv.tts = value }
@@ -79,21 +71,21 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is NativeTypedArrayView<*> -> ByteArrayInputStream(result.buffer.buffer)
             is InputStream -> result
             is ByteArray -> result.inputStream()
-            is NativeResponse -> result.rawResponse?.body?.byteStream()
+            is NativeResponse -> {
+                if (result.rawResponse?.isSuccessful == false) throw RuntimeException("HTTP Error: ${result.rawResponse?.code}")
+                result.rawResponse?.body?.byteStream()
+            }
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
-                    // 🛠️ 关键修复：直接使用原生 OkHttpClient 绕过 Net 库的 DSL 兼容性问题
-                    // 显式设置 300秒 (5分钟) 超时，确保长延时下载任务不会被底层默认 15s 掐断
                     val client = OkHttpClient.Builder()
                         .connectTimeout(300, TimeUnit.SECONDS)
                         .readTimeout(300, TimeUnit.SECONDS)
-                        .writeTimeout(300, TimeUnit.SECONDS)
                         .build()
-                    val request = Request.Builder().url(str).build()
-                    client.newCall(request).execute().body?.byteStream()
-                }
-                else throw IllegalStateException(str)
+                    val resp = client.newCall(Request.Builder().url(str).build()).execute()
+                    if (!resp.isSuccessful) throw RuntimeException("URL Fetch Error: ${resp.code}")
+                    resp.body?.byteStream()
+                } else throw IllegalStateException(str)
             }
             else -> throw IllegalArgumentException("Unsupported return type: ${result.javaClass.name}")
         }
@@ -103,7 +95,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     private suspend fun getAudioV2(request: Map<String, Any>): InputStream {
         val ins = JsBridgeInputStream()
-        // 在 runInterruptible 外面获取回调，因为它是一个 suspend 函数
         val callback = ins.getCallback(mMutex) 
         val result = runInterruptible {
             engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, callback)
@@ -115,20 +106,15 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
         
-        return try {
-            val result = try {
-                runInterruptible {
-                    engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
-                }
-            } catch (_: NoSuchMethodException) {
-                val request = mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p)
-                // 直接返回 getAudioV2 的流
-                return getAudioV2(request)
+        // 🛠️ 删除了外部 try-catch，不再返回 EmptyInputStream
+        // 这样一旦发生中断或网络错误，异常会直接抛给 SystemTtsService 处理
+        val result = try {
+            runInterruptible {
+                engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
             }
-            handleAudioResult(result) ?: EmptyInputStream
-        } catch (e: Exception) {
-            console.error("Plugin Synthesis Failed: ${e.message}")
-            EmptyInputStream
+        } catch (_: NoSuchMethodException) {
+            return getAudioV2(mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p))
         }
+        return handleAudioResult(result) ?: throw RuntimeException("Synthesis Result is Empty")
     }
 }
