@@ -3,7 +3,7 @@
 package com.github.jing332.tts_server_android.service.forwarder.system
 
 import android.speech.tts.TextToSpeech
-import android.util.Log 
+import android.util.Log
 import com.github.jing332.database.entities.systts.AudioParams
 import com.github.jing332.database.entities.systts.source.LocalTtsParameter
 import com.github.jing332.server.forwarder.Engine
@@ -73,13 +73,13 @@ class SysTtsForwarderService(
                 val speed = (params.speed + 100) / 100f
                 val pitch = params.pitch / 100f
 
+                // 🛠️ 完整保留逻辑，仅增加超时与结案保护
                 return withContext(NonCancellable) {
-                    // 🛠️ 调整为 130 秒总保护超时，确保请求在重试最终失败后能正常释放
                     withTimeoutOrNull(130000L) {
                         Log.d(TAG, "android tts init: ${params.engine}")
                         androidTts.init(params.engine)
 
-                        Log.d(TAG, "android tts get file: ${params.text.take(10)}...")
+                        Log.d(TAG, "android tts get file...")
                         val result = androidTts.getFile(
                             params.text,
                             params.locale,
@@ -95,7 +95,7 @@ class SysTtsForwarderService(
                         )
 
                         result.onFailure {
-                            Log.e(TAG, "获取文件失败: ${it.message}")
+                            Log.e(TAG, "获取音频失败: ${it.message}")
                             return@withTimeoutOrNull null
                         }.value
                     }
