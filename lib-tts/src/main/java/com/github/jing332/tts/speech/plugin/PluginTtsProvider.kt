@@ -26,6 +26,11 @@ open class PluginTtsProvider(
     private var mEngine: TtsPluginEngineV2? = null
     private var mEngineV3: TtsPluginEngineV3? = null
 
+    // 👇👇👇 关键修复：补回了这个被我误删的公开属性 👇👇👇
+    var engine: TtsPluginEngineV2?
+        get() = mEngine
+        set(value) { mEngine = value }
+
     override var state: EngineState = EngineState.Uninitialized()
 
     override suspend fun getStream(params: SystemParams, source: PluginTtsSource): InputStream {
@@ -61,8 +66,6 @@ open class PluginTtsProvider(
             if (mEngineV3 == null) mEngineV3 = TtsPluginEngineManager.getV3(context, plugin)
         } else {
             // 3. 默认走 Rhino (V2)
-            // ❌ 删除了这里的 try-catch 自动救场
-            // 如果 V2 崩了，就让它崩，不要去调 V3，否则会报 confusing 的 ttsrv 错误
             if (mEngine == null) {
                 mEngine = TtsPluginEngineManager.get(context, plugin)
             }
