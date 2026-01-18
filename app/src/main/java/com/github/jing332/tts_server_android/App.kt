@@ -19,6 +19,9 @@ import coil3.request.crossfade
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+// 👇 新增：NetConfig 配置所需的包
+import com.drake.net.NetConfig
+import java.util.concurrent.TimeUnit
 
 val app: App
     inline get() = App.instance
@@ -45,6 +48,14 @@ class App : Application() {
         
         // 🛠️ 拔掉引线：暂时关闭 CrashHandler，它会触发崩溃的日志初始化
         // CrashHandler(this) 
+
+        // 👇 新增：初始化 NetConfig 并设置全局超时时间为 180秒
+        // 这将覆盖默认的 10秒 限制，适用于所有使用 Net 库的请求
+        NetConfig.initialize("", this) {
+            connectTimeout(180, TimeUnit.SECONDS)
+            readTimeout(180, TimeUnit.SECONDS)
+            writeTimeout(180, TimeUnit.SECONDS)
+        }
 
         SystemTtsV2.Converters.json = AppConst.jsonBuilder
         AsyncCircleImageSettings.interceptor = AsyncImageInterceptor
