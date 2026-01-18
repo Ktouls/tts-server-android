@@ -163,7 +163,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 context.androidContext = appCtx
                 context.event = this@SystemTtsService
                 context.cfg = SynthesizerConfig(
-                    requestTimeout = { 300000L },
+                    requestTimeout = { 300000L }, // 强制锁死 5分钟
                     maxRetryTimes = { SysTtsConfig.maxRetryCount },
                     streamPlayEnabled = { SysTtsConfig.isStreamPlayModeEnabled },
                     silenceSkipEnabled = { SysTtsConfig.isSkipSilentAudio },
@@ -280,8 +280,10 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
     }
 
     override fun onStop() {
-        logger.debug { getString(R.string.cancel) }
-        synthesizerJob?.cancel()
+        // 🛠️ 只有当确实在运行任务时才打印日志并取消，防止 done 之后干扰
+        if (synthesizerJob?.isActive == true) {
+            synthesizerJob?.cancel()
+        }
         synthesizerJob = null
         updateNotification(getString(R.string.systts_state_idle), "")
     }
@@ -317,7 +319,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             return
         }
 
-        // 🛠️ 关键修复：每次新任务开始，先强制杀掉旧任务并释放 Mutex 锁
+        // 🛠️ 强制清理上一个可能卡住的任务，防止 Mutex 锁死
         onStop()
 
         mNotificationJob?.cancel()
@@ -338,11 +340,12 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             }.value
 
             val exceptionHandler = CoroutineExceptionHandler { _, e ->
-                logE("Synthesize Crash Caught: ${e.message}", e)
+                Log.e(TAG, "合成任务被终止: ${e.message}")
                 callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 callback.done()
             }
 
+            // 🛠️ 使用 mScope 启动，不再被 runBlocking 阻塞到底
             synthesizerJob = mScope.launch(exceptionHandler) {
                 try {
                     mTtsManager?.synthesize(
@@ -364,15 +367,13 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
 
                         }
                     )?.onSuccess {
-                        logger.debug { "done" }
                         callback.done()
                     }?.onFailure {
                         handleSynthesisError(it, callback)
                     }
                 } catch (e: Exception) {
-                    logE("Synthesize Stopped: ${e.message}")
+                    Log.e(TAG, "Synthesize Exception: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    // 任务可能被取消，不调用 done() 避免冲突
                 }
             }
 
@@ -412,19 +413,21 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
         pcmData: ByteArray,
     ) {
         try {
+            // 🛠️ 暗号拦截：如果捕获到 GlobalHttp 耗尽重试发来的暗号
             if (pcmData.size < 512) { 
                 val str = String(pcmData, StandardCharsets.UTF_8)
                 if (str.startsWith("TTS_NET_ERR:")) {
-                    logE("捕获网络错误(停止合成): $str")
+                    logE("捕获网络错误(彻底停止): $str")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
-                    throw RuntimeException("Network Error Interrupt")
+                    // 绝杀：抛出异常，强制中断整个链条，不走 done
+                    throw RuntimeException("Network Retry Timeout")
                 }
             }
 
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
-            // 🛠️ 关键修复：增加 synthesizerJob?.isActive 检测，确保旧任务被杀后立即停止写入数据
-            while (offset < pcmData.size && (synthesizerJob?.isActive == true)) {
+            // 🛠️ 严格检查 synthesizerJob.isActive，确保取消时立刻停止写入
+            while (offset < pcmData.size && synthesizerJob?.isActive == true) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
                 val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
                 if (ret == TextToSpeech.ERROR) {
@@ -433,7 +436,6 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 offset += bytesToWrite
             }
         } catch (e: Exception) {
-            logE("writeToCallBack error: ${e.message}")
             throw e 
         }
     }
