@@ -1,6 +1,7 @@
 package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
+import android.util.Log
 import com.drake.net.Net
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
@@ -30,6 +31,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         const val FUNC_GET_AUDIO_V2 = "getAudioV2"
         const val FUNC_ON_LOAD = "onLoad"
         const val FUNC_ON_STOP = "onStop"
+        const val TAG = "TtsPluginEngineV2"
     }
 
     var console: Console
@@ -50,15 +52,26 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
     fun eval() {
-        execute(plugin.code)
-        pluginJsObj.apply {
-            // 🛠️ 修复：增加空安全检查 (?.) 和默认值 (?: "")，防止新建插件时因属性缺失导致 NPE 闪退
-            plugin.name = get("name")?.toString() ?: ""
-            plugin.pluginId = get("id")?.toString() ?: ""
-            plugin.author = get("author")?.toString() ?: ""
-            plugin.iconUrl = get("iconUrl")?.toString() ?: ""
-            plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
-            plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
+        try {
+            execute(plugin.code)
+            pluginJsObj.apply {
+                plugin.name = get("name")?.toString() ?: ""
+                plugin.pluginId = get("id")?.toString() ?: ""
+                plugin.author = get("author")?.toString() ?: ""
+                plugin.iconUrl = get("iconUrl")?.toString() ?: ""
+                plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
+                plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
+            }
+        } catch (e: Exception) {
+            // 🛠️ 核心修复：如果是 ES6 脚本，Rhino 解析失败是正常的。
+            // 我们通过正则静默提取基本的 name 和 id，确保能保存到数据库，而不是崩溃。
+            Log.w(TAG, "Rhino 预解析失败（可能是 ES6 脚本）: ${e.message}")
+            
+            if (plugin.name.isEmpty()) 
+                plugin.name = Regex("""name\s*:\s*["'](.*?)["']""").find(plugin.code)?.groupValues?.get(1) ?: "未命名V3"
+            
+            if (plugin.pluginId.isEmpty()) 
+                plugin.pluginId = Regex("""id\s*:\s*["'](.*?)["']""").find(plugin.code)?.groupValues?.get(1) ?: "v3_default_id"
         }
     }
 
@@ -106,9 +119,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
-        
-        // 🛠️ 关键：去掉了 try-catch 兜底，不再返回 EmptyInputStream
-        // 一旦出错（暗号拦截或超时），抛出异常让 Service 处理，彻底根治 Bad audio format 0
         val result = try {
             runInterruptible {
                 engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
