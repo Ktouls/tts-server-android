@@ -32,7 +32,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
         return px.dp
     }
 
-    // 🛠️ 核心修复：如果找不到 EditorJS，返回一个空的 NativeObject 而不抛出异常
+    // 修复：如果找不到 EditorJS，返回一个空的 NativeObject 而不抛出异常
     private val editUiJsObject: ScriptableObject by lazy {
         try {
             (engine.get(OBJ_UI_JS) as? ScriptableObject) ?: org.mozilla.javascript.NativeObject()
@@ -50,7 +50,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
 
         return try {
             engine.invokeMethod(
-                editUiUiJsObject,
+                editUiJsObject, // 🛠️ 已修正笔误：从 editUiUiJsObject 改为 editUiJsObject
                 FUNC_SAMPLE_RATE,
                 locale,
                 voice
