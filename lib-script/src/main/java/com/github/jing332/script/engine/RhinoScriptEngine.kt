@@ -31,6 +31,10 @@ open class RhinoScriptEngine(val runtime: RhinoScriptRuntime) :
 
 
     override fun execute(source: ScriptSource): Any? = withRhinoContext { cx ->
+        // 🛠️ 关键修复：关闭 Rhino 引擎的指令观察者阈值
+        // 防止长延时的网络请求或重试逻辑被引擎误判为“脚本超时”而强行中断
+        cx.instructionObserverThreshold = 0
+        
         val sourceName = source.sourceName.ifEmpty { "<Unknown>" }
         scope = (cx.newObject(globalScope) as ScriptableObject).apply {
             prototype = globalScope
@@ -46,7 +50,7 @@ open class RhinoScriptEngine(val runtime: RhinoScriptRuntime) :
                 cx.evaluateString(scope, source.script, sourceName, 1, null)
             }
 
-            else -> IllegalArgumentException("Unsupported source type: ${source::class.java.name}")
+            else -> throw IllegalArgumentException("Unsupported source type: ${source::class.java.name}")
         }
     }
 
@@ -85,6 +89,9 @@ open class RhinoScriptEngine(val runtime: RhinoScriptRuntime) :
     private fun invoke(thiz: ScriptableObject, name: String, vararg args: Any?): Any? {
         val parent = thiz.parentScope ?: globalScope
         return withRhinoContext { cx ->
+            // 🛠️ 关键修复：在方法调用时同样关闭指令限制
+            cx.instructionObserverThreshold = 0
+            
             val method =
                 ScriptableObject.getProperty(thiz, name) as? Function
                     ?: throw NoSuchMethodException(name)
