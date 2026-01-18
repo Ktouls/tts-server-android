@@ -1,6 +1,6 @@
 package com.github.jing332.tts_server_android.compose.systts
 
-import android.util.Log // 👈 使用原生 Log
+import android.util.Log 
 import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,8 +21,9 @@ class TtsLogViewModel : ViewModel() {
         const val TAG = "TtsLogViewModel"
         const val MAX_SIZE = 150
         
-        // 👈 删除了 KotlinLogging
-        val file = File(AppConst.externalFilesDir.absolutePath + File.separator + "log" + File.separator + "system_tts.log")
+        // 修改点：路径从 files/log 指向 cache/log
+        // AppConst.externalFilesDir 指向 .../files，parentFile 指向 .../包名，再 resolve cache 即为 cache 目录
+        val file = File(AppConst.externalFilesDir.parentFile, "cache/log/system_tts.log")
     }
 
     val logs = mutableStateListOf<LogEntry>()
@@ -33,7 +34,7 @@ class TtsLogViewModel : ViewModel() {
             FileWriter(file, false).use { it.write(CharArray(0)) }
         }.onFailure {
             logs.add(LogEntry(level = LogLevel.ERROR, message = it.stackTraceToString()))
-            Log.e(TAG, "clear: ", it) // 👈 使用原生 Log
+            Log.e(TAG, "clear: ", it) 
         }
     }
 
@@ -64,7 +65,7 @@ class TtsLogViewModel : ViewModel() {
                 })
             }
         } catch (e: Exception) {
-            Log.e(TAG, "init: ", e) // 👈 使用原生 Log
+            Log.e(TAG, "init: ", e) 
         }
     }
 
@@ -76,7 +77,7 @@ class TtsLogViewModel : ViewModel() {
             logs.add(logEntry)
 
         } catch (e: Exception) {
-            Log.e(TAG, "add: ", e) // 👈 使用原生 Log
+            Log.e(TAG, "add: ", e) 
         }
     }
 
@@ -92,7 +93,7 @@ class TtsLogViewModel : ViewModel() {
             }
         }.onFailure {
             logs.add(LogEntry(level = LogLevel.ERROR, message = it.stackTraceToString()))
-            Log.e(TAG, "pull: ", it) // 👈 使用原生 Log
+            Log.e(TAG, "pull: ", it) 
         }
 
     }
