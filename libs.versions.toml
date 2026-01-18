@@ -54,6 +54,9 @@ logback = "1.5.7"
 logback-android = "3.0.0"
 kotlin-result = "2.0.1"
 
+# 👇👇👇 QuickJS 版本号 👇👇👇
+quickjs = "1.9.0"
+
 # 👇👇👇 添加版本号 👇👇👇
 sardine = "v0.8"
 
@@ -144,6 +147,9 @@ logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "lo
 logback-android = { module = "com.github.tony19:logback-android", version.ref = "logback-android" }
 hanlp = { group = "com.hankcs", name = "hanlp", version.ref = "hanlp" }
 mozilla-rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
+
+# 👇👇👇 QuickJS 库定义 👇👇👇
+quickjs-android = { module = "io.github.dokar3:quickjs-android", version.ref = "quickjs" }
 
 # 👇👇👇 添加库定义 👇👇👇
 sardine = { group = "com.github.thegrizzlylabs", name = "sardine-android", version.ref = "sardine" }
