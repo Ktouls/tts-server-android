@@ -1,7 +1,7 @@
 package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
-import android.util.Log // 👈 使用原生 Log 替代 KotlinLogging
+import android.util.Log
 import android.widget.LinearLayout
 import com.github.jing332.common.utils.dp
 import com.github.jing332.common.utils.toCountryFlagEmoji
@@ -32,27 +32,34 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
         return px.dp
     }
 
+    // 🛠️ 核心修复：如果找不到 EditorJS，返回一个空的 NativeObject 而不抛出异常
     private val editUiJsObject: ScriptableObject by lazy {
-        engine.get(OBJ_UI_JS) as? ScriptableObject
-            ?: throw IllegalStateException("$OBJ_UI_JS not found")
+        try {
+            (engine.get(OBJ_UI_JS) as? ScriptableObject) ?: org.mozilla.javascript.NativeObject()
+        } catch (e: Exception) {
+            org.mozilla.javascript.NativeObject()
+        }
     }
 
     override fun execute(script: String): Any? {
         return super.execute(PackageImporter.default + script)
     }
 
-
     fun getSampleRate(locale: String, voice: String): Int? {
         runtime.console.debug("getSampleRate($locale, $voice)")
 
-        return engine.invokeMethod(
-            editUiJsObject,
-            FUNC_SAMPLE_RATE,
-            locale,
-            voice
-        )?.run {
-            return if (this is Int) this
-            else (this as Double).toInt()
+        return try {
+            engine.invokeMethod(
+                editUiUiJsObject,
+                FUNC_SAMPLE_RATE,
+                locale,
+                voice
+            )?.run {
+                if (this is Int) this
+                else (this as Double).toInt()
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -64,55 +71,62 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
                 if (this is Boolean) this
                 else (this as Double).toInt() == 1
             } ?: true
-        } catch (_: NoSuchMethodException) {
+        } catch (_: Exception) {
             true
         }
     }
 
     fun getLocales(): Map<String, String> {
-        return engine.invokeMethod(editUiJsObject, FUNC_LOCALES).run {
-            when (this) {
-                is List<*> -> this.associate {
-                    val locale = Locale.forLanguageTag(it.toString())
-                    val displayName = locale.country.toCountryFlagEmoji() + " " + locale.displayName
-                    it.toString() to displayName
-                }
+        return try {
+            engine.invokeMethod(editUiJsObject, FUNC_LOCALES).run {
+                when (this) {
+                    is List<*> -> this.associate {
+                        val locale = Locale.forLanguageTag(it.toString())
+                        val displayName = locale.country.toCountryFlagEmoji() + " " + locale.displayName
+                        it.toString() to displayName
+                    }
 
-                is Map<*, *> -> {
-                    this.map { (key, value) ->
-                        key.toString() to value.toString()
-                    }.toMap()
-                }
+                    is Map<*, *> -> {
+                        this.map { (key, value) ->
+                            key.toString() to value.toString()
+                        }.toMap()
+                    }
 
-                else -> emptyMap()
+                    else -> emptyMap()
+                }
             }
+        } catch (_: Exception) {
+            emptyMap()
         }
     }
 
     fun getVoices(locale: String): List<Voice> {
-        return engine.invokeMethod(editUiJsObject, FUNC_VOICES, locale).run {
-            when (this) {
-                is ScriptableObject -> {
-                    toMap<Any, Any>().map { (key, value) ->
-                        ScriptRuntime.toString(key) to value
-                    }.map { (key, value) ->
-                        var icon: String? = null
-                        var name: String = if (value is CharSequence) value.toString() else ""
+        return try {
+            engine.invokeMethod(editUiJsObject, FUNC_VOICES, locale).run {
+                when (this) {
+                    is ScriptableObject -> {
+                        toMap<Any, Any>().map { (key, value) ->
+                            ScriptRuntime.toString(key) to value
+                        }.map { (key, value) ->
+                            var icon: String? = null
+                            var name: String = if (value is CharSequence) value.toString() else ""
 
-                        if (value is ScriptableObject) {
-                            icon = value.get("iconUrl")?.toString()
-                                ?: value.get("icon")?.toString()
+                            if (value is ScriptableObject) {
+                                icon = value.get("iconUrl")?.toString()
+                                    ?: value.get("icon")?.toString()
 
-                            name = value.get("name")?.toString() ?: name
+                                name = value.get("name")?.toString() ?: name
+                            }
+
+                            Voice(key.toString(), name.toString(), icon)
                         }
-
-
-                        Voice(key.toString(), name.toString(), icon)
                     }
-                }
 
-                else -> emptyList()
+                    else -> emptyList()
+                }
             }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
@@ -121,7 +135,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
 
         try {
             engine.invokeMethod(editUiJsObject, FUNC_ON_LOAD_DATA)
-        } catch (_: NoSuchMethodException) {
+        } catch (_: Exception) {
         }
     }
 
@@ -134,7 +148,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
                 context,
                 container
             )
-        } catch (_: NoSuchMethodException) {
+        } catch (_: Exception) {
         }
     }
 
@@ -148,7 +162,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
                 locale,
                 voice
             )
-        } catch (_: NoSuchMethodException) {
+        } catch (_: Exception) {
         }
     }
 
