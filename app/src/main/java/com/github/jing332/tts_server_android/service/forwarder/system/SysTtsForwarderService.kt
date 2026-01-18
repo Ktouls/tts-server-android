@@ -73,7 +73,6 @@ class SysTtsForwarderService(
                 val speed = (params.speed + 100) / 100f
                 val pitch = params.pitch / 100f
 
-                // 🛠️ 完整保留逻辑，仅增加超时与结案保护
                 return withContext(NonCancellable) {
                     withTimeoutOrNull(130000L) {
                         Log.d(TAG, "android tts init: ${params.engine}")
@@ -95,7 +94,8 @@ class SysTtsForwarderService(
                         )
 
                         result.onFailure {
-                            Log.e(TAG, "获取音频失败: ${it.message}")
+                            // 🛠️ 修正：直接打印 it，解决 Unresolved reference 'message'
+                            Log.e(TAG, "获取音频失败: $it")
                             return@withTimeoutOrNull null
                         }.value
                     }
