@@ -54,6 +54,11 @@ import com.github.jing332.tts_server_android.compose.MainActivity
 import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.tts_server_android.constant.AppConst
 import com.github.jing332.tts_server_android.constant.SystemNotificationConst
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_CANCEL
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_NOTIFY_KILL_PROCESS
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_CONFIG
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.ACTION_UPDATE_REPLACER
+import com.github.jing332.tts_server_android.service.systts.SystemTtsService.Companion.NOTIFICATION_CHAN_ID
 import com.github.jing332.tts_server_android.service.systts.help.TextProcessor
 import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
@@ -164,7 +169,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 context.androidContext = appCtx
                 context.event = this@SystemTtsService
                 context.cfg = SynthesizerConfig(
-                    requestTimeout = { 120000L }, // 🛠️ 调整为 2 分钟超时
+                    requestTimeout = { 120000L }, // 🛠️ 调整为 120,000ms (2分钟)
                     maxRetryTimes = { SysTtsConfig.maxRetryCount },
                     streamPlayEnabled = { SysTtsConfig.isStreamPlayModeEnabled },
                     silenceSkipEnabled = { SysTtsConfig.isSkipSilentAudio },
@@ -292,7 +297,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
     private var synthesizerJob: Job? = null
     private var mNotificationJob: Job? = null
 
-    // 🛠️ 跟踪当前 callback，解决死锁
+    // 🛠️ 记住上一个回调，用于在卡死时强行疏通队列
     private var lastTtsCallback: android.speech.tts.SynthesisCallback? = null
 
 
@@ -322,7 +327,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             return
         }
 
-        // 🛠️ 强力破窗：新请求进来时强制在系统层结案旧任务
+        // 🛠️ 强力破窗：新请求冒头时强制注销旧任务，解决点击没反应的问题
         onStop()
         lastTtsCallback?.runCatching { error(TextToSpeech.ERROR_SYNTHESIS); done() }
         lastTtsCallback = callback
@@ -345,15 +350,15 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             }.value
 
             val exceptionHandler = CoroutineExceptionHandler { _, e ->
-                Log.e(TAG, "Synthesize Crash Caught: ${e.message}", e)
+                Log.e(TAG, "Synthesize Crash: ${e.message}")
                 callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 callback.done()
             }
 
             synthesizerJob = mScope.launch(exceptionHandler) {
-                var hasSentAudio = false
+                var audioSent = false
                 try {
-                    // 🛠️ 增加 125 秒总超时保护
+                    // 🛠️ 125 秒总保护
                     withTimeoutOrNull(125000L) {
                         mTtsManager?.synthesize(
                             params = SystemParams(text = request.charSequenceText.toString()),
@@ -361,32 +366,29 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                             callback = object :
                                 com.github.jing332.tts.synthesizer.SynthesisCallback {
                                 override fun onSynthesizeStart(sampleRate: Int) {
-                                    callback.start(
-                                        /* sampleRateInHz = */ sampleRate,
-                                        /* audioFormat = */ AudioFormat.ENCODING_PCM_16BIT,
-                                        /* channelCount = */ 1
-                                    )
+                                    callback.start(sampleRate, AudioFormat.ENCODING_PCM_16BIT, 1)
                                 }
 
                                 override fun onSynthesizeAvailable(audio: ByteArray) {
-                                    hasSentAudio = true
+                                    audioSent = true
                                     writeToCallBack(callback, audio)
                                 }
 
                             }
                         )
                     }?.onSuccess {
-                        if (!hasSentAudio) {
+                        // 如果任务完成但插件由于某种逻辑“跳过”了合成（没发字节），向系统报错
+                        if (!audioSent) {
                             callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
                         }
                     }?.onFailure {
                         handleSynthesisError(it, callback)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Synthesize Exception: ${e.message}")
+                    Log.e(TAG, "Synthesize Interrupted: ${e.message}")
                     callback.error(TextToSpeech.ERROR_SYNTHESIS)
                 } finally {
-                    // 🛠️ 结案逻辑：必须调用 done()
+                    // 🛠️ 结案铁律：确保必须调用 done() 以清空队列，防止下次点击无反应
                     callback.done()
                     if (lastTtsCallback == callback) lastTtsCallback = null
                 }
@@ -420,9 +422,9 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 callback.error(TextToSpeech.ERROR_INVALID_REQUEST)
             }
         }
+        // done() 统一在 finally 处理
     }
 
-    // 【核心修改】对暗号 + 强制抛出异常
     private fun writeToCallBack(
         callback: android.speech.tts.SynthesisCallback,
         pcmData: ByteArray,
@@ -431,19 +433,21 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
             if (pcmData.size < 512) { 
                 val str = String(pcmData, StandardCharsets.UTF_8)
                 if (str.startsWith("TTS_NET_ERR:")) {
-                    logE("捕获网络超时暗号: $str")
+                    logE("捕获重试失败暗号: $str")
                     callback.error(TextToSpeech.ERROR_NETWORK_TIMEOUT)
-                    throw RuntimeException("Network Error Stop")
+                    // 强制抛出异常跳转到 finally 完成结案
+                    throw RuntimeException("Network Retry Timeout Interrupt")
                 }
             }
 
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
+            // 🛠️ 严格检查 synthesizerJob.isActive，确保任务取消时立刻停止写入
             while (offset < pcmData.size && synthesizerJob?.isActive == true) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
                 val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
                 if (ret == TextToSpeech.ERROR) {
-                    throw RuntimeException("SynthesisCallback.audioAvailable ERROR")
+                    throw RuntimeException("SynthesisCallback.audioAvailable returned ERROR")
                 }
                 offset += bytesToWrite
             }
@@ -586,7 +590,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
     private fun logI(msg: String) = logger.info(msg)
     private fun logW(msg: String) = logger.warn(msg)
     private fun logE(msg: String, throwable: Throwable? = null) {
-        updateNotification("⚠️ " + getString(R.string.error), msg)
+        updateNotification("⚠️ Error", msg)
         Log.e(TAG, msg, throwable)
 
         logger.error(msg)
