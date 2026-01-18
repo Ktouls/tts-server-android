@@ -2,7 +2,6 @@ package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
 import android.util.Log
-import com.drake.net.Net
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
@@ -10,12 +9,10 @@ import com.github.jing332.script.runtime.NativeResponse
 import com.github.jing332.script.runtime.console.Console
 import com.github.jing332.script.simple.CompatScriptRuntime
 import com.github.jing332.script.source.toScriptSource
-import com.github.jing332.tts.speech.EmptyInputStream
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import org.mozilla.javascript.ScriptableObject
 import org.mozilla.javascript.Undefined
 import org.mozilla.javascript.typedarrays.NativeArrayBuffer
@@ -52,6 +49,13 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
     fun eval() {
+        // 🛠️ 严谨逻辑：如果标记了使用 QuickJS，直接走正则提取，严禁交给 Rhino 解析
+        if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
+            Log.i(TAG, "检测到 QuickJS 暗号，跳过 Rhino 解析，执行正则元数据提取")
+            extractMetadataByRegex()
+            return
+        }
+
         try {
             execute(plugin.code)
             pluginJsObj.apply {
@@ -63,16 +67,16 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
             }
         } catch (e: Exception) {
-            // 🛠️ 核心修复：如果是 ES6 脚本，Rhino 解析失败是正常的。
-            // 我们通过正则静默提取基本的 name 和 id，确保能保存到数据库，而不是崩溃。
-            Log.w(TAG, "Rhino 预解析失败（可能是 ES6 脚本）: ${e.message}")
-            
-            if (plugin.name.isEmpty()) 
-                plugin.name = Regex("""name\s*:\s*["'](.*?)["']""").find(plugin.code)?.groupValues?.get(1) ?: "未命名V3"
-            
-            if (plugin.pluginId.isEmpty()) 
-                plugin.pluginId = Regex("""id\s*:\s*["'](.*?)["']""").find(plugin.code)?.groupValues?.get(1) ?: "v3_default_id"
+            Log.w(TAG, "Rhino 解析失败，尝试兜底提取: ${e.message}")
+            extractMetadataByRegex()
         }
+    }
+
+    private fun extractMetadataByRegex() {
+        // 使用更健壮的正则，支持单引号、双引号、以及属性名带或不带引号的情况
+        plugin.name = Regex("""name\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.name.ifEmpty { "未命名ES6" }
+        plugin.pluginId = Regex("""id\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: plugin.pluginId.ifEmpty { "v3_default_id" }
+        plugin.author = Regex("""author\s*[:=]\s*['"](.*?)['"]""").find(plugin.code)?.groupValues?.get(1) ?: "anonymous"
     }
 
     fun onLoad(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_LOAD) }.getOrNull()
