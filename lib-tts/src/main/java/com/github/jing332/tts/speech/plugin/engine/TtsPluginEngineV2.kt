@@ -106,8 +106,8 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
         
-        // 🛠️ 删除了外部 try-catch，不再返回 EmptyInputStream
-        // 这样一旦发生中断或网络错误，异常会直接抛给 SystemTtsService 处理
+        // 🛠️ 关键：去掉了 try-catch 兜底，不再返回 EmptyInputStream
+        // 一旦出错（暗号拦截或超时），抛出异常让 Service 处理，彻底根治 Bad audio format 0
         val result = try {
             runInterruptible {
                 engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
