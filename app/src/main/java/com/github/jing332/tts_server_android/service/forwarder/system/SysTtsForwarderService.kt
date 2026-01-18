@@ -3,7 +3,7 @@
 package com.github.jing332.tts_server_android.service.forwarder.system
 
 import android.speech.tts.TextToSpeech
-import android.util.Log // 👈 改用原生 Log
+import android.util.Log 
 import com.github.jing332.database.entities.systts.AudioParams
 import com.github.jing332.database.entities.systts.source.LocalTtsParameter
 import com.github.jing332.server.forwarder.Engine
@@ -19,6 +19,9 @@ import com.github.jing332.tts_server_android.help.LocalTtsEngineHelper
 import com.github.jing332.tts_server_android.service.forwarder.AbsForwarderService
 import com.github.jing332.tts_server_android.service.systts.SystemTtsService
 import com.github.michaelbull.result.onFailure
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 class SysTtsForwarderService(
@@ -41,7 +44,6 @@ class SysTtsForwarderService(
         const val ACTION_ON_STARTED = "ACTION_ON_STARTED"
         const val ACTION_ON_LOG = "ACTION_ON_LOG"
 
-        // 👈 删除了 KotlinLogging，避免类加载时崩溃
         val isRunning: Boolean
             get() = instance?.isRunning == true
 
@@ -71,27 +73,37 @@ class SysTtsForwarderService(
                 val speed = (params.speed + 100) / 100f
                 val pitch = params.pitch / 100f
 
-                Log.d(TAG, "android tts init: $params") // 👈 改用原生 Log.d
-                androidTts.init(params.engine)
+                // 🛠️ 关键修复：使用 withContext(NonCancellable) 
+                // 确保即使阅读APP侧断开了HTTP连接，我们后台的 TTS 任务也能跑完（或者重试完）
+                // 这样可以防止产生“僵尸请求”霸占着 Android 系统 TTS 队列
+                return withContext(NonCancellable) {
+                    // 🛠️ 设置一个比 GlobalHttp 重试略长的总超时（310秒）
+                    // 彻底解决阅读重新点击播放无反应的问题，确保超时后自动释放资源
+                    withTimeoutOrNull(310000L) {
+                        Log.d(TAG, "android tts init: ${params.engine}")
+                        androidTts.init(params.engine)
 
-                Log.d(TAG, "android tts get file...") // 👈 改用原生 Log.d
-                val file = androidTts.getFile(
-                    params.text,
-                    params.locale,
-                    voice = params.voice,
-                    extraParams = listOf(
-                        LocalTtsParameter(
-                            type = LocalTtsParameter.TYPE_BOOL,
-                            key = SystemTtsService.PARAM_BGM_ENABLED,
-                            value = false.toString()
+                        Log.d(TAG, "android tts get file: ${params.text.take(10)}...")
+                        val result = androidTts.getFile(
+                            params.text,
+                            params.locale,
+                            voice = params.voice,
+                            extraParams = listOf(
+                                LocalTtsParameter(
+                                    type = LocalTtsParameter.TYPE_BOOL,
+                                    key = SystemTtsService.PARAM_BGM_ENABLED,
+                                    value = false.toString()
+                                )
+                            ),
+                            params = AudioParams(speed = speed, pitch = pitch)
                         )
-                    ),
-                    params = AudioParams(speed = speed, pitch = pitch)
-                )
 
-                return file.onFailure {
-                    return null
-                }.value
+                        result.onFailure {
+                            Log.e(TAG, "获取文件失败: ${it.message}")
+                            return@withTimeoutOrNull null
+                        }.value
+                    }
+                }
             }
 
             override suspend fun voices(engine: String): List<Voice> {
