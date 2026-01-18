@@ -53,7 +53,7 @@ class GlobalHttp : ScriptableObject() {
             var currentRetry = 0
             var lastError: Exception? = null
 
-            // 🛠️ 增加 Thread.interrupted() 检查，确保任务取消时立刻退出循环
+            // 🛠️ 关键修复：增加 !Thread.currentThread().isInterrupted 检查
             while (currentRetry < MAX_RETRY_COUNTS && !Thread.currentThread().isInterrupted) {
                 try {
                     val resp = block()
@@ -67,10 +67,10 @@ class GlobalHttp : ScriptableObject() {
                     if (currentRetry % 5 == 1) Log.w(TAG, "网络异常, 正在重试 ($currentRetry): ${e.message}")
 
                     try {
-                        // 🛠️ 使用能感应中断的休眠
+                        // 🛠️ 关键修复：使用 TimeUnit 休眠，它能感应中断
                         TimeUnit.MILLISECONDS.sleep(RETRY_INTERVAL_MS)
                     } catch (interrupted: InterruptedException) {
-                        Thread.currentThread().interrupt() // 保持中断状态
+                        Thread.currentThread().interrupt() 
                         break
                     }
                 }
