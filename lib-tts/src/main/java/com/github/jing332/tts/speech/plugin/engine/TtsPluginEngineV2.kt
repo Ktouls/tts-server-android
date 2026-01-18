@@ -52,9 +52,10 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     fun eval() {
         execute(plugin.code)
         pluginJsObj.apply {
-            plugin.name = get("name").toString()
-            plugin.pluginId = get("id").toString()
-            plugin.author = get("author").toString()
+            // 🛠️ 修复：增加空安全检查 (?.) 和默认值 (?: "")，防止新建插件时因属性缺失导致 NPE 闪退
+            plugin.name = get("name")?.toString() ?: ""
+            plugin.pluginId = get("id")?.toString() ?: ""
+            plugin.author = get("author")?.toString() ?: ""
             plugin.iconUrl = get("iconUrl")?.toString() ?: ""
             plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
             plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
