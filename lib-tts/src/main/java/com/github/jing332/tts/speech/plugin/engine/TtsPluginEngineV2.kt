@@ -49,9 +49,9 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
     fun eval() {
-        // 如果标记了 use quickjs，强制走正则提取，严禁交给 Rhino 解析
+        // 🛠️ 严谨逻辑：只要有 use quickjs，绝对禁止 Rhino 触摸代码，直接走增强版正则提取
         if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
-            extractMetadataByRegex()
+            extractMetadataStrictly()
             return
         }
 
@@ -62,35 +62,41 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 plugin.pluginId = get("id")?.toString() ?: ""
                 plugin.author = get("author")?.toString() ?: ""
                 plugin.iconUrl = get("iconUrl")?.toString() ?: ""
-                plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
+                plugin.defVars = try { 
+                    val vars = get("vars")
+                    if (vars is Map<*, *>) vars as Map<String, Map<String, String>> else emptyMap()
+                } catch (_: Exception) { emptyMap() }
                 plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Rhino 解析失败，执行兜底提取: ${e.message}")
-            extractMetadataByRegex()
+            Log.w(TAG, "Rhino 预解析失败，执行兜底提取: ${e.message}")
+            extractMetadataStrictly()
         }
     }
 
     /**
-     * 🛠️ 严谨的正则提取：锁定在 PluginJS 对象范围内
+     * 🛠️ 增强版严谨正则提取：
+     * 1. 限制搜索范围在 PluginJS 对象定义的起始 1000 字符内，防止匹配到 voices。
+     * 2. 强制重置变量配置，消除 UI 误导。
      */
-    private fun extractMetadataByRegex() {
+    private fun extractMetadataStrictly() {
         val code = plugin.code
-        // 寻找 PluginJS 对象定义的起始位置
         val startIdx = code.indexOf(OBJ_PLUGIN_JS).coerceAtLeast(0)
-        // 限制搜索范围在 PluginJS 定义后的 500 个字符内，避免匹配到 voices 里的 name
-        val searchScope = code.substring(startIdx, (startIdx + 500).coerceAtMost(code.length))
+        // 截取 PluginJS 定义后的局部范围进行精准匹配
+        val searchScope = code.substring(startIdx, (startIdx + 1000).coerceAtMost(code.length))
 
-        plugin.name = Regex("""['"]?name['"]?\s*[:=]\s*['"](.*?)['"]""").find(searchScope)?.groupValues?.get(1) 
-            ?: plugin.name.ifEmpty { "未命名V3" }
+        fun find(key: String): String? {
+            // 匹配 'key': 'value', "key": "value", 或 key: "value"
+            val pattern = """['"]?$key['"]?\s*[:=]\s*['"](.*?)['"]""".toRegex()
+            return pattern.find(searchScope)?.groupValues?.get(1)
+        }
 
-        plugin.pluginId = Regex("""['"]?id['"]?\s*[:=]\s*['"](.*?)['"]""").find(searchScope)?.groupValues?.get(1)
-            ?: plugin.pluginId.ifEmpty { "v3_default_id" }
-
-        plugin.author = Regex("""['"]?author['"]?\s*[:=]\s*['"](.*?)['"]""").find(searchScope)?.groupValues?.get(1)
-            ?: "anonymous"
+        plugin.name = find("name") ?: plugin.name.ifEmpty { "未命名V3" }
+        plugin.pluginId = find("id") ?: plugin.pluginId.ifEmpty { "v3_default_id" }
+        plugin.author = find("author") ?: "anonymous"
+        plugin.iconUrl = find("iconUrl") ?: ""
         
-        // 🛠️ 关键修复：重置默认变量，防止 UI 误显示“设置变量”
+        // 关键：V3 插件目前不需要通过旧 UI 设置变量，强制清空
         plugin.defVars = emptyMap()
     }
 
@@ -113,7 +119,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 if (str.startsWith("http")) {
                     val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).build()
                     val resp = client.newCall(Request.Builder().url(str).build()).execute()
-                    if (!resp.isSuccessful) throw RuntimeException("URL Error: ${resp.code}")
+                    if (!resp.isSuccessful) throw RuntimeException("Download failed: ${resp.code}")
                     resp.body?.byteStream()
                 } else throw IllegalStateException(str)
             }
@@ -140,6 +146,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         } catch (_: NoSuchMethodException) {
             return getAudioV2(mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p))
         }
-        return handleAudioResult(result) ?: throw RuntimeException("Empty result")
+        return handleAudioResult(result) ?: throw RuntimeException("Empty synthesis result")
     }
 }
