@@ -26,6 +26,7 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
+import java.util.concurrent.TimeUnit // 【新增】用于时间单位
 
 open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     companion object {
@@ -79,7 +80,15 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is NativeResponse -> result.rawResponse?.body?.byteStream()
             is CharSequence -> {
                 val str = result.toString()
-                if (str.startsWith("http")) Net.get(str).execute<Response>().body?.byteStream()
+                if (str.startsWith("http")) {
+                    // 🛠️ 关键修复：显式设置超时时间，防止插件返回音频 URL 时由于默认 15s 超时导致合成中断
+                    // 这里设置为 300秒 (5分钟)，确保与 GlobalHttp 的重试配额一致
+                    Net.get(str) {
+                        connectTimeout(300, TimeUnit.SECONDS)
+                        readTimeout(300, TimeUnit.SECONDS)
+                        writeTimeout(300, TimeUnit.SECONDS)
+                    }.execute<Response>().body?.byteStream()
+                }
                 else throw IllegalStateException(str)
             }
             else -> throw IllegalArgumentException("Unsupported return type: ${result.javaClass.name}")
@@ -90,7 +99,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     private suspend fun getAudioV2(request: Map<String, Any>): InputStream {
         val ins = JsBridgeInputStream()
-        // 🛠️ 修复：在 runInterruptible 外面获取回调，因为它是一个 suspend 函数
+        // 在 runInterruptible 外面获取回调，因为它是一个 suspend 函数
         val callback = ins.getCallback(mMutex) 
         val result = runInterruptible {
             engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, callback)
@@ -109,7 +118,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 }
             } catch (_: NoSuchMethodException) {
                 val request = mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p)
-                // 🛠️ 修复：这里直接返回 getAudioV2 的流
+                // 直接返回 getAudioV2 的流
                 return getAudioV2(request)
             }
             handleAudioResult(result) ?: EmptyInputStream
