@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.github.jing332.tts_server_android.service.systts
 
 import android.app.Notification
@@ -166,12 +168,12 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 context.androidContext = appCtx
                 context.event = this@SystemTtsService
                 context.cfg = SynthesizerConfig(
-                    requestTimeout = SysTtsConfig::requestTimeout,
-                    maxRetryTimes = SysTtsConfig::maxRetryCount,
-                    streamPlayEnabled = SysTtsConfig::isStreamPlayModeEnabled,
-                    silenceSkipEnabled = SysTtsConfig::isSkipSilentAudio,
-                    bgmShuffleEnabled = SysTtsConfig::isBgmShuffleEnabled,
-                    bgmVolume = SysTtsConfig::bgmVolume,
+                    requestTimeout = { SysTtsConfig.requestTimeout.toLong() },
+                    maxRetryTimes = { SysTtsConfig.maxRetryCount },
+                    streamPlayEnabled = { SysTtsConfig.isStreamPlayModeEnabled },
+                    silenceSkipEnabled = { SysTtsConfig.isSkipSilentAudio },
+                    bgmShuffleEnabled = { SysTtsConfig.isBgmShuffleEnabled },
+                    bgmVolume = { SysTtsConfig.bgmVolume },
                     audioParams = {
                         AudioParams(
                             speed = SysTtsConfig.audioParamsSpeed,
@@ -439,7 +441,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
 
             val maxBufferSize: Int = callback.maxBufferSize
             var offset = 0
-            while (offset < pcmData.size && mTtsManager!!.isSynthesizing) {
+            while (offset < pcmData.size && (mTtsManager?.isSynthesizing == true)) {
                 val bytesToWrite = maxBufferSize.coerceAtMost(pcmData.size - offset)
                 val ret = callback.audioAvailable(pcmData, offset, bytesToWrite)
                 if (ret == TextToSpeech.ERROR) {
@@ -563,7 +565,7 @@ class SystemTtsService : TextToSpeechService(), IEventDispatcher {
                 }
 
                 ACTION_NOTIFY_CANCEL -> { // 通知按钮{取消}
-                    if (mTtsManager!!.isSynthesizing)
+                    if (mTtsManager?.isSynthesizing == true)
                         onStop() /* 取消当前播放 */
                     else /* 无播放，关闭通知 */ {
                         stopForeground(true)
