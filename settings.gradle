@@ -1,16 +1,21 @@
 pluginManagement {
     includeBuild("build-logic")
     repositories {
+        // 👇 把 Maven Central 放到第一位
+        mavenCentral()
         gradlePluginPortal()
         google()
-        mavenCentral()
     }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
+        // 👇 重点：这里也要把 Maven Central 放到第一位！
+        // 这样找到 QuickJS 后就会立刻停止，不会去撞 JitPack 的 401 墙
         mavenCentral()
+        google()
+        
+        // JitPack 放在最后，只给必须用的库（如 Net）兜底
         maven { url 'https://jitpack.io' }
     }
 
