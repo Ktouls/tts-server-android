@@ -12,9 +12,13 @@ object TtsPluginEngineManager : AbstractCachedManager<String, TtsPluginUiEngineV
 ) {
     /**
      * 获取 V2 引擎 (Rhino)
-     * 用于兼容旧插件和 UI 界面变量获取
      */
     fun get(context: Context, plugin: Plugin): TtsPluginUiEngineV2 {
+        // 修复：如果插件没有ID（新建状态），直接返回新实例，不走缓存，防止空指针
+        if (plugin.pluginId.isEmpty()) {
+            return TtsPluginUiEngineV2(context, plugin).apply { eval() }
+        }
+
         return cache.get(plugin.pluginId) ?: run {
             val engine = TtsPluginUiEngineV2(context, plugin)
             engine.eval()
@@ -23,15 +27,18 @@ object TtsPluginEngineManager : AbstractCachedManager<String, TtsPluginUiEngineV
         }
     }
 
-    // 👇👇👇 新增：V3 引擎缓存池 👇👇👇
+    // V3 引擎缓存池
     private val v3CacheMap = mutableMapOf<String, TtsPluginEngineV3>()
 
     /**
      * 获取 V3 引擎 (QuickJS)
-     * 用于执行支持 ES2020+ 的新插件
      */
     fun getV3(context: Context, plugin: Plugin): TtsPluginEngineV3 {
-        // 简单的缓存机制，避免重复创建 OkHttpClient
+        // 修复：同上，无ID时不缓存
+        if (plugin.pluginId.isEmpty()) {
+            return TtsPluginEngineV3(context, plugin)
+        }
+
         return v3CacheMap[plugin.pluginId] ?: run {
             val engine = TtsPluginEngineV3(context, plugin)
             v3CacheMap[plugin.pluginId] = engine
