@@ -11,12 +11,7 @@ dependencyResolutionManagement {
     repositories {
         mavenCentral()
         google()
-        
-        maven { 
-            url 'https://jitpack.io' 
-            // 👇 关键修改：带上 GitHub Token 作为通行证
-            credentials { username = System.getenv("GITHUB_TOKEN") ?: 'authToken' }
-        }
+        maven { url 'https://jitpack.io' }
     }
 
     versionCatalogs {
