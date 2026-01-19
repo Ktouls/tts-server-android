@@ -21,6 +21,9 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
+/**
+ * Rhino (V2) 引擎：负责旧版插件执行及新版插件的元数据预解析
+ */
 open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     companion object {
         const val OBJ_PLUGIN_JS = "PluginJS"
@@ -48,8 +51,11 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
+    /**
+     * 执行脚本评估，用于提取插件名称、ID 等元数据
+     */
     fun eval() {
-        // 🛠️ 严谨逻辑：只要有 use quickjs，绝对禁止 Rhino 触摸代码，直接走增强版正则提取
+        // 🛠️ 严谨拦截：如果是 V3 脚本（含暗号），严禁 Rhino 运行代码，直接转入正则提取
         if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
             extractMetadataStrictly()
             return
@@ -69,40 +75,41 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
                 plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Rhino 预解析失败，执行兜底提取: ${e.message}")
+            Log.w(TAG, "Rhino 引擎解析失败，尝试执行兜底正则提取: ${e.message}")
             extractMetadataStrictly()
         }
     }
 
     /**
-     * 🛠️ 增强版严谨正则提取：
-     * 1. 限制搜索范围在 PluginJS 对象定义的起始 1000 字符内，防止匹配到 voices。
-     * 2. 强制重置变量配置，消除 UI 误导。
+     * 🛠️ 增强版正则提取：
+     * 1. 锁定搜索范围：仅在 PluginJS 定义后的前 1000 字符内搜索，避免误匹配到 voices 列表。
+     * 2. 清理 UI 冗余：强制清空变量提示，适配 V3 独立运行需求。
      */
     private fun extractMetadataStrictly() {
         val code = plugin.code
         val startIdx = code.indexOf(OBJ_PLUGIN_JS).coerceAtLeast(0)
-        // 截取 PluginJS 定义后的局部范围进行精准匹配
         val searchScope = code.substring(startIdx, (startIdx + 1000).coerceAtMost(code.length))
 
-        fun find(key: String): String? {
-            // 匹配 'key': 'value', "key": "value", 或 key: "value"
+        fun findValue(key: String): String? {
             val pattern = """['"]?$key['"]?\s*[:=]\s*['"](.*?)['"]""".toRegex()
             return pattern.find(searchScope)?.groupValues?.get(1)
         }
 
-        plugin.name = find("name") ?: plugin.name.ifEmpty { "未命名V3" }
-        plugin.pluginId = find("id") ?: plugin.pluginId.ifEmpty { "v3_default_id" }
-        plugin.author = find("author") ?: "anonymous"
-        plugin.iconUrl = find("iconUrl") ?: ""
+        plugin.name = findValue("name") ?: plugin.name.ifEmpty { "未命名 V3" }
+        plugin.pluginId = findValue("id") ?: plugin.pluginId.ifEmpty { "v3_default_id" }
+        plugin.author = findValue("author") ?: "anonymous"
+        plugin.iconUrl = findValue("iconUrl") ?: ""
         
-        // 关键：V3 插件目前不需要通过旧 UI 设置变量，强制清空
+        // 强制重置变量配置，消除 UI “请单击此处设置变量”的错误提示
         plugin.defVars = emptyMap()
     }
 
     fun onLoad(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_LOAD) }.getOrNull()
     fun onStop(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_STOP) }.getOrNull()
 
+    /**
+     * 处理音频结果，支持多种返回类型及 URL 自动下载
+     */
     private fun handleAudioResult(result: Any?): InputStream? {
         if (result == null || result is Undefined) return null
         return when (result) {
@@ -117,13 +124,16 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
-                    val client = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).build()
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(30, TimeUnit.SECONDS)
+                        .readTimeout(30, TimeUnit.SECONDS)
+                        .build()
                     val resp = client.newCall(Request.Builder().url(str).build()).execute()
-                    if (!resp.isSuccessful) throw RuntimeException("Download failed: ${resp.code}")
+                    if (!resp.isSuccessful) throw RuntimeException("Audio Download Failed: ${resp.code}")
                     resp.body?.byteStream()
-                } else throw IllegalStateException(str)
+                } else throw IllegalStateException("Unexpected String Result: $str")
             }
-            else -> throw IllegalArgumentException("Type: ${result.javaClass.name}")
+            else -> throw IllegalArgumentException("Unsupported Result Type: ${result.javaClass.name}")
         }
     }
 
@@ -134,7 +144,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         val callback = ins.getCallback(mMutex) 
         val result = runInterruptible {
             engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO_V2, request, callback)
-                ?: throw NoSuchMethodException("getAudioV2 not found")
+                ?: throw NoSuchMethodException("getAudioV2() not found")
         }
         return handleAudioResult(result) ?: ins
     }
@@ -142,10 +152,12 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
         val result = try {
-            runInterruptible { engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p) }
+            runInterruptible {
+                engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
+            }
         } catch (_: NoSuchMethodException) {
             return getAudioV2(mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p))
         }
-        return handleAudioResult(result) ?: throw RuntimeException("Empty synthesis result")
+        return handleAudioResult(result) ?: throw RuntimeException("Synthesis result is empty")
     }
 }
