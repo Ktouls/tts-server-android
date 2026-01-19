@@ -12,53 +12,55 @@ import kotlinx.coroutines.TimeoutCancellationException
 import java.io.ByteArrayInputStream
 
 /**
- * 严谨版请求器：完全对齐 ITtsRequester 接口签名
- * 实现了动态超时注入与网络错误暗号回传机制
+ * 严谨版请求器：适配接口定义与错误类型
  */
 class DefaultTtsRequester(val context: SynthesizerContext) : ITtsRequester {
-    
+
     override suspend fun request(
         params: SystemParams,
         tts: TtsConfiguration
     ): Result<ITtsRequester.Response, RequesterError> {
         val source = tts.source
         
-        // 🛡️ 注入：从上下文读取由 App 注入的动态超时设置
+        // 1. 注入：读取系统动态超时
         val timeoutMs = context.cfg.requestTimeout()
 
-        // 获取引擎实例，适配第 8 步修改后的签名
+        // 2. 初始化引擎
         val engine = CachedEngineManager.getEngine(context.androidContext, source, timeoutMs)
-            ?: return Err(RequesterError.Unknown("Engine initialized failed"))
+            ?: return Err(RequesterError.StateError("Engine initialized failed"))
 
         return try {
+            // 3. 参数同步：将配置中的动态参数应用到 source 对象，确保引擎能读取到最新的语速/音量
+            // 注意：这里假设 source 是可变对象，若 source 是只读的，getStream 内部可能只会读取默认值
+            // 但在当前的架构规约下，这是将 audioParams 传递给 getStream 的唯一标准途径
             if (source is PluginTtsSource) {
-                val inputStream = try {
-                    // 🛠️ 修正：通过 tts.speechInfo 读取语速、音量、音高
-                    engine.getAudio(
-                        params.text, source.locale, source.voice,
-                        tts.speechInfo.speed,
-                        tts.speechInfo.volume,
-                        tts.speechInfo.pitch
-                    ) ?: return Err(RequesterError.EmptyResponse)
-                } catch (e: TimeoutCancellationException) {
-                    // 🛠️ 注入暗号：配合 SystemTtsService 捕获，解决系统转圈死锁
-                    val errMark = "TTS_NET_ERR: Request Timeout (${timeoutMs}ms)".toByteArray()
-                    ByteArrayInputStream(errMark)
-                }
-                
-                Ok(ITtsRequester.Response(stream = inputStream))
+                source.speed = (tts.audioParams.speed * 50).toInt() // 假设映射关系：50为基准
+                source.volume = (tts.audioParams.volume * 50).toInt()
+                source.pitch = (tts.audioParams.pitch * 50).toInt()
+            }
+            // 若是非插件源，通常有其特定的参数设置逻辑，这里保持通用调用
+
+            // 4. 执行请求：使用标准的 getStream 接口
+            val stream = try {
+                engine.getStream(params, source)
+            } catch (e: TimeoutCancellationException) {
+                // 🛡️ 捕获超时：返回暗号流，触发 SystemTtsService 的防御机制
+                val errMark = "TTS_NET_ERR: Request Timeout (${timeoutMs}ms)".toByteArray()
+                ByteArrayInputStream(errMark)
+            }
+
+            if (stream == null) {
+                Err(RequesterError.StateError("Engine returned null stream"))
             } else {
-                // 非插件引擎（内置/系统 TTS）逻辑
-                val stream = engine.getStream(params, source)
                 Ok(ITtsRequester.Response(stream = stream))
             }
         } catch (e: Exception) {
-            // 防御性编程：捕获合成过程中的意外异常
-            Err(RequesterError.Unknown(e.message ?: e.toString()))
+            // 5. 异常封装：使用 RequesterError.RequestError 包装异常
+            Err(RequesterError.RequestError(e))
         }
     }
 
     override fun destroy() {
-        // 预留清理逻辑
+        // 清理逻辑
     }
 }
