@@ -2,6 +2,7 @@ package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
 import android.util.Log
+import com.github.jing332.conf.SysTtsConfig
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
@@ -22,7 +23,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * Rhino (V2) 引擎：负责旧版插件执行及新版插件的元数据预解析
+ * Rhino (V2) 引擎：已接入 SysTtsConfig 动态超时
  */
 open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     companion object {
@@ -33,6 +34,10 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         const val FUNC_ON_STOP = "onStop"
         const val TAG = "TtsPluginEngineV2"
     }
+
+    // 🛠️ 动态获取超时：将秒转换为毫秒，并确保最小不低于 5s
+    protected val configTimeout: Long
+        get() = SysTtsConfig.requestTimeout.coerceAtLeast(5000L)
 
     var console: Console
         get() = engine.runtime.console
@@ -51,11 +56,7 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
-    /**
-     * 执行脚本评估，用于提取插件名称、ID 等元数据
-     */
     fun eval() {
-        // 🛠️ 严谨拦截：如果是 V3 脚本（含暗号），严禁 Rhino 运行代码，直接转入正则提取
         if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
             extractMetadataStrictly()
             return
@@ -80,11 +81,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         }
     }
 
-    /**
-     * 🛠️ 增强版正则提取：
-     * 1. 锁定搜索范围：仅在 PluginJS 定义后的前 1000 字符内搜索，避免误匹配到 voices 列表。
-     * 2. 清理 UI 冗余：强制清空变量提示，适配 V3 独立运行需求。
-     */
     private fun extractMetadataStrictly() {
         val code = plugin.code
         val startIdx = code.indexOf(OBJ_PLUGIN_JS).coerceAtLeast(0)
@@ -99,17 +95,12 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         plugin.pluginId = findValue("id") ?: plugin.pluginId.ifEmpty { "v3_default_id" }
         plugin.author = findValue("author") ?: "anonymous"
         plugin.iconUrl = findValue("iconUrl") ?: ""
-        
-        // 强制重置变量配置，消除 UI “请单击此处设置变量”的错误提示
         plugin.defVars = emptyMap()
     }
 
     fun onLoad(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_LOAD) }.getOrNull()
     fun onStop(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_STOP) }.getOrNull()
 
-    /**
-     * 处理音频结果，支持多种返回类型及 URL 自动下载
-     */
     private fun handleAudioResult(result: Any?): InputStream? {
         if (result == null || result is Undefined) return null
         return when (result) {
@@ -124,9 +115,10 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
+                    // 🛠️ 修正：使用动态超时配置
                     val client = OkHttpClient.Builder()
-                        .connectTimeout(30, TimeUnit.SECONDS)
-                        .readTimeout(30, TimeUnit.SECONDS)
+                        .connectTimeout(configTimeout, TimeUnit.MILLISECONDS)
+                        .readTimeout(configTimeout, TimeUnit.MILLISECONDS)
                         .build()
                     val resp = client.newCall(Request.Builder().url(str).build()).execute()
                     if (!resp.isSuccessful) throw RuntimeException("Audio Download Failed: ${resp.code}")
