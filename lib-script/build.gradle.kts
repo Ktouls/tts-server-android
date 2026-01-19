@@ -38,8 +38,10 @@ android {
 dependencies {
     coreLibraryDesugaring(libs.desugar)
 
-    //noinspection GradleDependency
-    api(libs.mozilla.rhino)
+    // ✅ 移除 Rhino，引入 GraalVM Polyglot
+    api(libs.graalvm.polyglot)
+    implementation(libs.graalvm.js)
+
     implementation(project(":lib-common"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.okhttp)
