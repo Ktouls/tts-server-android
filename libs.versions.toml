@@ -47,14 +47,14 @@ desugar = "2.1.5"
 splitties = "3.0.0"
 
 hanlp = "portable-1.8.6"
-rhino = "1.8.0"
 logging = "7.0.0"
 slf4j = "2.0.16"
 logback = "1.5.7"
 logback-android = "3.0.0"
 kotlin-result = "2.0.1"
 
-# 👇👇👇 添加版本号 👇👇👇
+# 👇👇👇 GraalVM JS 引擎版本 👇👇👇
+graalvm = "24.1.1"
 sardine = "v0.8"
 
 [libraries]
@@ -82,7 +82,6 @@ markwon-image = { module = "io.noties.markwon:image", version.ref = "markwon" }
 markwon-linkify = { module = "io.noties.markwon:linkify", version.ref = "markwon" }
 
 android-svg = { module = "com.caverock:androidsvg", version.ref = "androidsgv" }
-
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
@@ -143,9 +142,14 @@ slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 logback-android = { module = "com.github.tony19:logback-android", version.ref = "logback-android" }
 hanlp = { group = "com.hankcs", name = "hanlp", version.ref = "hanlp" }
-mozilla-rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 
-# 👇👇👇 添加库定义 👇👇👇
+# 👇👇👇 GraalVM 库定义 👇👇👇
+graalvm-polyglot = { module = "org.graalvm.polyglot:polyglot", version.ref = "graalvm" }
+graalvm-js = { module = "org.graalvm.polyglot:js", version.ref = "graalvm" }
+
+# 注释掉 Rhino 库定义，准备迁移后移除
+# mozilla-rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
+
 sardine = { group = "com.github.thegrizzlylabs", name = "sardine-android", version.ref = "sardine" }
 
 # logic-build
