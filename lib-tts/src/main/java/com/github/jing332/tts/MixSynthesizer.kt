@@ -9,9 +9,13 @@ import com.github.jing332.tts.synthesizer.ITtsRequester
 import io.github.oshai.kotlinlogging.KotlinLogging
 import splitties.init.appCtx
 
+/**
+ * 混合合成器：严谨适配注入式上下文，确保超时逻辑全链路透传
+ */
 open class MixSynthesizer(
     final override val context: SynthesizerContext
 ) : AbstractMixSynthesizer() {
+    // 🛡️ 严谨：所有组件共享同一个 Context，确保注入的配置在全链路生效
     override var textProcessor: ITextProcessor = TextProcessor(context)
     override var ttsRequester: ITtsRequester = DefaultTtsRequester(context)
     override var streamProcessor: IResultProcessor = DefaultResultProcessor(context)
@@ -25,8 +29,8 @@ open class MixSynthesizer(
                 SynthesizerContext(
                     androidContext = appCtx,
                     logger = logger,
-                    // 显式初始化，确保使用的是我们修改后的默认 5 分钟超时
-                    cfg = SynthesizerConfig(requestTimeout = { 300000 }) 
+                    // 默认防御值，实际运行时会被 SystemTtsService 注入的配置覆盖
+                    cfg = SynthesizerConfig(requestTimeout = { 5000L }) 
                 )
             )
         }
