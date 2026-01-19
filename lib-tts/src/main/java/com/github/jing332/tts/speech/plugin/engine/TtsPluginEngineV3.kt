@@ -17,13 +17,12 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 严谨版 V3：注入式超时控制与 Base64 强力清洗
- * 适配逻辑：移除对 app 模块的直接依赖，由构造函数接收 requestTimeout 参数
+ * 严谨版 V3：包含 Legacy 兼容层 (Polyfill)
  */
 open class TtsPluginEngineV3(
     val context: Context, 
     var plugin: Plugin,
-    protected val requestTimeout: Long // 🛡️ 注入外部参数，修复模块间引用报错
+    protected val requestTimeout: Long 
 ) {
     companion object {
         const val TAG = "TtsPluginEngineV3"
@@ -32,7 +31,6 @@ open class TtsPluginEngineV3(
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    // 🛡️ 防御性设定：确保超时时间不低于 5s
     private val configTimeoutMs: Long
         get() = requestTimeout.coerceAtLeast(5000L)
 
@@ -47,7 +45,7 @@ open class TtsPluginEngineV3(
     interface JsBridge {
         fun onSuccess(result: Any?)
         fun onError(error: String)
-        fun fetch(url: String, options: String): String
+        fun fetch(url: String, options: String): String // 这是一个同步方法
         fun fileExist(path: String): Boolean
         fun readTxtFile(path: String): String
         fun writeTxtFile(path: String, content: String)
@@ -66,6 +64,7 @@ open class TtsPluginEngineV3(
                 override fun onSuccess(result: Any?) { deferred.complete(result) }
                 override fun onError(error: String) { deferred.completeExceptionally(RuntimeException(error)) }
                 
+                // 核心：fetch 实现，同步执行请求并返回 String
                 override fun fetch(url: String, options: String): String {
                     return try {
                         val opt = JSONObject(options)
@@ -93,14 +92,48 @@ open class TtsPluginEngineV3(
             })
 
             val bvValue = (plugin.userVars["bv"] ?: "").replace("\"", "\\\"")
+            
+            // 🛡️ 注入兼容层 (Polyfill)
+            // 1. 模拟 console
+            // 2. 模拟 ttsrv
+            // 3. 模拟 http (重要！火山插件用了 http.post)
+            // 4. 模拟 Buffer (重要！火山插件用了 Buffer.from)
             quickJs.evaluate("""
                 const console = { log: (m) => java.lang.System.out.println("[V3] " + m), error: (m) => java.lang.System.err.println("[V3] " + m) };
+                
                 const ttsrv = {
                     fileExist: (p) => nativeBridge.fileExist(p),
                     readTxtFile: (p) => nativeBridge.readTxtFile(p),
                     writeTxtFile: (p, c) => nativeBridge.writeTxtFile(p, c),
                     tts: { data: {"bv": "$bvValue"} }
                 };
+
+                // 模拟 Buffer: 只要原样返回 base64 字符串即可，Kotlin 层会处理
+                const Buffer = {
+                    from: (data, type) => data 
+                };
+
+                // 模拟 http 对象 (适配旧插件)
+                const http = {
+                    post: (url, body, headers) => {
+                        const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'POST', body: body, headers: headers}));
+                        if (resStr.startsWith("ERROR:")) throw new Error(resStr);
+                        return {
+                            json: () => JSON.parse(resStr),
+                            body: () => ({ string: () => resStr })
+                        };
+                    },
+                    get: (url, headers) => {
+                        const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'GET', headers: headers}));
+                        if (resStr.startsWith("ERROR:")) throw new Error(resStr);
+                        return {
+                            json: () => JSON.parse(resStr),
+                            body: () => ({ string: () => resStr })
+                        };
+                    }
+                };
+
+                // 模拟 fetch (适配新插件)
                 const fetch = async (url, opt = {}) => {
                     const res = nativeBridge.fetch(url, JSON.stringify(opt));
                     if (res.startsWith("ERROR:")) throw new Error(res);
@@ -115,12 +148,12 @@ open class TtsPluginEngineV3(
                 (async () => {
                     try {
                         const res = $OBJ_PLUGIN_JS.$FUNC_GET_AUDIO("$text", "$locale", "$voice", $r, $v, $p);
-                        nativeBridge.onSuccess(await res);
+                        // 如果 res 是 Promise 则 await，否则直接使用
+                        nativeBridge.onSuccess(res instanceof Promise ? await res : res);
                     } catch (e) { nativeBridge.onError(e.message); }
                 })();
             """.trimIndent())
 
-            // 🛡️ 动态超时：配置时间 + 2秒冗余缓冲
             val result = withTimeout(configTimeoutMs + 2000L) { deferred.await() }
             return@withContext handleResult(result)
 
@@ -134,15 +167,16 @@ open class TtsPluginEngineV3(
 
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
-        // 🛡️ 强力清洗：移除所有空白符、换行符、回车符，防止 Base64 解码器挂起
+        // 移除可能存在的空白符
         val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
         if (data.startsWith("http")) {
             return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { null }
         }
         return try { 
+            // 这里的 data 应该是 base64 字符串 (因为 Buffer.from 被我们 mock 成了直接返回字符串)
             ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT)) 
         } catch (e: Exception) { 
-            Log.e(TAG, "Base64 解码致命错误: ${e.message}")
+            Log.e(TAG, "Base64 解码错误: ${e.message}")
             null 
         }
     }
