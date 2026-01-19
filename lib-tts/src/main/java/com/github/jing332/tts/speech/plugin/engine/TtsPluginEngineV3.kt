@@ -18,7 +18,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 严谨版 V3：接入 SysTtsConfig 动态超时，修复 Volcano 转圈问题
+ * 严谨版 V3：接入动态超时，强力清洗 Base64 解决转圈问题
  */
 open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     companion object {
@@ -28,14 +28,15 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    // 🛠️ 修正：动态读取 SysTtsConfig
-    private val configTimeout: Long
-        get() = SysTtsConfig.requestTimeout.coerceAtLeast(5000L)
+    // 🛠️ 动态读取：将秒转换为毫秒，防御性设定最小 5s
+    private val configTimeoutMs: Long
+        get() = (SysTtsConfig.requestTimeout * 1000L).coerceAtLeast(5000L)
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(configTimeout, TimeUnit.MILLISECONDS)
-            .readTimeout(configTimeout, TimeUnit.MILLISECONDS)
+            .connectTimeout(configTimeoutMs, TimeUnit.MILLISECONDS)
+            .readTimeout(configTimeoutMs, TimeUnit.MILLISECONDS)
+            .writeTimeout(configTimeoutMs, TimeUnit.MILLISECONDS)
             .build()
     }
 
@@ -53,7 +54,7 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         text: String, locale: String, voice: String,
         rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f
     ): InputStream? = withContext(Dispatchers.IO) {
-        val quickJs = QuickJs.create()
+        val quickJs = try { QuickJs.create() } catch (e: Exception) { throw e }
         val deferred = CompletableDeferred<Any?>()
 
         try {
@@ -67,8 +68,9 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                         val method = opt.optString("method", "GET")
                         val reqBuilder = Request.Builder().url(url)
                         
-                        val headers = opt.optJSONObject("headers")
-                        headers?.keys()?.forEach { key -> reqBuilder.header(key, headers.getString(key)) }
+                        opt.optJSONObject("headers")?.let { headers ->
+                            headers.keys().forEach { key -> reqBuilder.header(key, headers.getString(key)) }
+                        }
                         if (reqBuilder.build().header("User-Agent") == null) reqBuilder.header("User-Agent", DEFAULT_UA)
 
                         if (method.uppercase() == "POST") {
@@ -76,9 +78,7 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                             val contentType = opt.optJSONObject("headers")?.optString("Content-Type") ?: "application/json"
                             reqBuilder.post(bodyStr.toRequestBody(contentType.toMediaTypeOrNull()))
                         }
-                        
-                        val response = client.newCall(reqBuilder.build()).execute()
-                        response.body?.string() ?: ""
+                        client.newCall(reqBuilder.build()).execute().body?.string() ?: ""
                     } catch (e: Exception) { "ERROR: ${e.message}" }
                 }
 
@@ -116,8 +116,8 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 })();
             """.trimIndent())
 
-            // 🛠️ 修正：动态超时 + 2秒缓冲
-            val result = withTimeout(configTimeout + 2000L) { deferred.await() }
+            // 🛠️ 动态超时：配置时间 + 2秒冗余缓冲
+            val result = withTimeout(configTimeoutMs + 2000L) { deferred.await() }
             return@withContext handleResult(result)
 
         } catch (e: Exception) {
@@ -130,10 +130,16 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
 
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
+        // 🛠️ 强力清洗：移除所有空白符、换行符、回车符，防止 Base64 解码器挂起
         val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
         if (data.startsWith("http")) {
             return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { null }
         }
-        return try { ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT)) } catch (e: Exception) { null }
+        return try { 
+            ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT)) 
+        } catch (e: Exception) { 
+            Log.e(TAG, "Base64 解码致命错误: ${e.message}")
+            null 
+        }
     }
 }
