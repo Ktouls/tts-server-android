@@ -17,14 +17,11 @@
 let key = ttsrv.userVars['key'] || 'Default_KEY';
 let region = ttsrv.userVars['region'] || 'eastus';
 
-const format = "audio-24khz-48kbitrate-mono-mp3";
-const sampleRate = 24000; 
-const isNeedDecode = true; 
-
-// 状态缓存
-let voices = {};
-let currentVoices = new Map();
-let skillSpinner, styleSpinner, roleSpinner, seekStyle;
+const CONFIG = {
+    format: "audio-24khz-48kbitrate-mono-mp3",
+    sampleRate: 24000, 
+    isNeedDecode: true 
+};
 
 /**
  * ==========================================================
@@ -71,9 +68,8 @@ let PluginJS = {
             textSsml = `<lang xml:lang="${langSkill}">${escapeXml(text)}</lang>`;
         }
 
-        // 使用 ES6 模板字符串，结构严谨且易于维护
         const ssml = `
-        <speak xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xmlns:emo="http://www.w3.org/2009/10/emotionml" version="1.0" xml:lang="zh-CN">
+        <speak xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" version="1.0" xml:lang="zh-CN">
             <voice name="${voice}">
                 <mstts:express-as style="${style}" styledegree="${styleDegree}" role="${role}">
                     <prosody rate="${adjRate}%" pitch="${adjPitch}%" volume="${volume}">${textSsml}</prosody>
@@ -82,7 +78,7 @@ let PluginJS = {
          </speak >`;
 
         // 3. 异步请求：利用 V3 引擎的 fetch 链路
-        return await getAudioInternal(ssml, format);
+        return await getAudioInternal(ssml, CONFIG.format);
     },
 };
 
@@ -111,7 +107,7 @@ async function getAudioInternal(ssml, format) {
         "Content-Type": "application/ssml+xml",
     };
 
-    // 🛡️ 调用重构后的 fetch，实现动态超时与 Base64 自动清洗
+    // 调用重构后的 fetch，对接动态超时与 Base64 自动清洗
     const resp = await fetch(ttsUrl, {
         method: 'POST',
         headers: headers,
@@ -129,144 +125,151 @@ async function getAudioInternal(ssml, format) {
 
 /**
  * ==========================================================
- * 第四部分：EditorJS (UI 与 联动逻辑 - Rhino 兼容)
+ * 第四部分：EditorJS (UI 与 联动逻辑 - Rhino 深度加固)
  * ==========================================================
  */
 let EditorJS = {
-    getAudioSampleRate: (locale, voice) => sampleRate,
-    isNeedDecode: (locale, voice) => isNeedDecode,
+    cachedVoices: [],
+    currentVoices: {}, 
+    skillSpinner: null, styleSpinner: null, roleSpinner: null, seekStyle: null,
+    VIEW_VISIBLE: 0,
+    VIEW_GONE: 8,
+
+    getAudioSampleRate: (locale, voice) => CONFIG.sampleRate,
+    isNeedDecode: (locale, voice) => CONFIG.isNeedDecode,
 
     getLocales: function() {
-        const locales = [];
-        voices.forEach((v) => {
-            const loc = v["Locale"];
-            if (!locales.includes(loc)) locales.push(loc);
-        });
+        var locales = [];
+        var list = this.cachedVoices || [];
+        for (var i = 0; i < list.length; i++) {
+            var loc = list[i]["Locale"];
+            if (locales.indexOf(loc) === -1) locales.push(loc);
+        }
         return locales;
     },
 
     getVoices: function(locale) {
-        currentVoices = new Map();
-        voices.forEach((v) => {
-            if (v['Locale'] === locale) currentVoices.set(v['ShortName'], v);
-        });
-
-        const mm = {};
-        for (let [k, v] of currentVoices.entries()) {
-            mm[k] = new java.lang.String(v['LocalName'] + ' (' + k + ')');
+        this.currentVoices = {}; 
+        var mm = {};
+        var list = this.cachedVoices || [];
+        for (var i = 0; i < list.length; i++) {
+            var v = list[i];
+            if (v['Locale'] === locale) {
+                this.currentVoices[v['ShortName']] = v;
+                mm[v['ShortName']] = new java.lang.String(v['LocalName'] + ' (' + v['ShortName'] + ')');
+            }
         }
         return mm;
     },
 
     onLoadData: function() {
-        let jsonStr = '';
-        if (ttsrv.fileExist('voices.json')) {
-            jsonStr = ttsrv.readTxtFile('voices.json');
+        var cachePath = 'voices_v3.json';
+        var jsonStr = '';
+        if (ttsrv.fileExist(cachePath)) {
+            jsonStr = ttsrv.readTxtFile(cachePath);
         } else {
             checkKeyRegion();
-            const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/voices/list`;
+            var url = "https://" + region + ".tts.speech.microsoft.com/cognitiveservices/voices/list";
             jsonStr = ttsrv.httpGetString(url, { "Ocp-Apim-Subscription-Key": key });
-            ttsrv.writeTxtFile('voices.json', jsonStr);
+            ttsrv.writeTxtFile(cachePath, jsonStr);
         }
-        voices = JSON.parse(jsonStr);
+        this.cachedVoices = JSON.parse(jsonStr);
     },
 
     onLoadUI: function(ctx, linerLayout) {
-        const layout = new org.android.widget.LinearLayout(ctx);
-        layout.setOrientation(0); 
-        const params = new org.android.widget.LinearLayout.LayoutParams(0, -2, 1);
+        var LinearLayout = org.android.widget.LinearLayout;
+        var layout = new LinearLayout(ctx);
+        layout.setOrientation(LinearLayout.HORIZONTAL); 
+        var params = new LinearLayout.LayoutParams(0, -2, 1);
 
-        skillSpinner = JSpinner(ctx, "语言技能 (language skill)");
-        linerLayout.addView(skillSpinner);
-        ttsrv.setMargins(skillSpinner, 2, 4, 0, 0);
-        skillSpinner.setOnItemSelected((_, __, item) => {
-            ttsrv.tts.data['languageSkill'] = item.value + '';
+        this.skillSpinner = JSpinner(ctx, "语言技能 (language skill)");
+        linerLayout.addView(this.skillSpinner);
+        ttsrv.setMargins(this.skillSpinner, 2, 4, 0, 0);
+        this.skillSpinner.setOnItemSelected(function(_, __, item) {
+            ttsrv.tts.data['languageSkill'] = String(item.value || '');
         });
 
-        styleSpinner = JSpinner(ctx, "风格 (style)");
-        styleSpinner.layoutParams = params;
-        layout.addView(styleSpinner);
-        ttsrv.setMargins(styleSpinner, 2, 4, 0, 0);
-        styleSpinner.setOnItemSelected((_, pos, item) => {
-            ttsrv.tts.data['style'] = item.value;
-            seekStyle.visibility = (pos === 0 || !item.value) ? 8 : 0; 
+        this.styleSpinner = JSpinner(ctx, "风格 (style)");
+        this.styleSpinner.layoutParams = params;
+        layout.addView(this.styleSpinner);
+        ttsrv.setMargins(this.styleSpinner, 2, 4, 0, 0);
+        
+        var self = this; 
+        this.styleSpinner.setOnItemSelected(function(_, pos, item) {
+            ttsrv.tts.data['style'] = String(item.value || '');
+            self.seekStyle.setVisibility((pos === 0 || !item.value) ? self.VIEW_GONE : self.VIEW_VISIBLE);
         });
 
-        roleSpinner = JSpinner(ctx, "角色 (role)");
-        roleSpinner.layoutParams = params;
-        layout.addView(roleSpinner);
-        ttsrv.setMargins(roleSpinner, 0, 4, 2, 0);
-        roleSpinner.setOnItemSelected((_, __, item) => {
-            ttsrv.tts.data['role'] = item.value;
+        this.roleSpinner = JSpinner(ctx, "角色 (role)");
+        this.roleSpinner.layoutParams = params;
+        layout.addView(this.roleSpinner);
+        ttsrv.setMargins(this.roleSpinner, 0, 4, 2, 0);
+        this.roleSpinner.setOnItemSelected(function(_, __, item) {
+            ttsrv.tts.data['role'] = String(item.value || '');
         });
         linerLayout.addView(layout);
 
-        seekStyle = JSeekBar(ctx, "风格强度 (Style degree)：");
-        linerLayout.addView(seekStyle);
-        ttsrv.setMargins(seekStyle, 0, 4, 0, -4);
-        seekStyle.setFloatType(2); 
-        seekStyle.max = 200;
+        this.seekStyle = JSeekBar(ctx, "风格强度 (Style degree)：");
+        linerLayout.addView(this.seekStyle);
+        ttsrv.setMargins(this.seekStyle, 0, 4, 0, -4);
+        this.seekStyle.setFloatType(2); 
+        this.seekStyle.setMax(200);
 
-        let styleDegree = Number(ttsrv.tts.data['styleDegree']);
-        if (!styleDegree || isNaN(styleDegree)) styleDegree = 1.0;
-        seekStyle.value = new java.lang.Float(styleDegree);
+        var styleDegree = parseFloat(ttsrv.tts.data['styleDegree'] || 1.0);
+        this.seekStyle.setValue(new java.lang.Float(styleDegree));
 
-        seekStyle.setOnChangeListener({
-            onStopTrackingTouch: (seek) => {
-                ttsrv.tts.data['styleDegree'] = Number(seek.value).toFixed(2);
-            },
+        this.seekStyle.setOnChangeListener({
+            onStopTrackingTouch: function(seek) {
+                ttsrv.tts.data['styleDegree'] = Number(seek.getValue()).toFixed(2);
+            }
         });
     },
 
     onVoiceChanged: function(locale, voiceCode) {
-        const vic = currentVoices.get(voiceCode);
+        var vic = this.currentVoices[voiceCode];
         if (!vic) return;
 
-        // 联动刷新语言技能
-        const locale2Items = [Item("默认 (default)", "")];
-        let locale2Pos = 0;
-        (vic['SecondaryLocaleList'] || []).forEach((v, i) => {
-            const loc = java.util.Locale.forLanguageTag(v);
+        var locale2Items = [Item("默认 (default)", "")];
+        var list2 = vic['SecondaryLocaleList'] || [];
+        var locale2Pos = 0;
+        for (var i = 0; i < list2.length; i++) {
+            var v = list2[i];
+            var loc = java.util.Locale.forLanguageTag(v);
             locale2Items.push(Item(loc.getDisplayName(loc), v));
-            if (v === ttsrv.tts.data['languageSkill'] + '') locale2Pos = i + 1;
-        });
-        skillSpinner.items = locale2Items;
-        skillSpinner.selectedPosition = locale2Pos;
-        skillSpinner.visibility = (locale2Items.length === 1) ? 8 : 0;
-
-        // 联动刷新风格列表
-        const styleItems = [Item("默认 (general)", "")];
-        let stylePos = 0;
-        const styles = vic['StyleList'];
-        if (styles) {
-            styles.forEach((v, i) => {
-                styleItems.push(Item(getString(v), v));
-                if (v === ttsrv.tts.data['style'] + '') stylePos = i + 1;
-            });
-        } else {
-            seekStyle.visibility = 8;
+            if (v === String(ttsrv.tts.data['languageSkill'])) locale2Pos = i + 1;
         }
-        styleSpinner.items = styleItems;
-        styleSpinner.selectedPosition = stylePos;
+        this.skillSpinner.setItems(locale2Items);
+        this.skillSpinner.setSelectedPosition(locale2Pos);
+        this.skillSpinner.setVisibility(locale2Items.length === 1 ? this.VIEW_GONE : this.VIEW_VISIBLE);
 
-        // 联动刷新角色列表
-        const roleItems = [Item("默认 (default)", "")];
-        let rolePos = 0;
-        const roles = vic['RolePlayList'];
-        if (roles) {
-            roles.forEach((v, i) => {
-                roleItems.push(Item(getString(v), v));
-                if (v === ttsrv.tts.data['role'] + '') rolePos = i + 1;
-            });
+        var styleItems = [Item("默认 (general)", "")];
+        var stylePos = 0;
+        var styles = vic['StyleList'] || [];
+        for (var j = 0; j < styles.length; j++) {
+            var s = styles[j];
+            styleItems.push(Item(getString(s), s));
+            if (s === String(ttsrv.tts.data['style'])) stylePos = j + 1;
         }
-        roleSpinner.items = roleItems;
-        roleSpinner.selectedPosition = rolePos;
+        this.styleSpinner.setItems(styleItems);
+        this.styleSpinner.setSelectedPosition(stylePos);
+        this.seekStyle.setVisibility(styleItems.length === 1 ? this.VIEW_GONE : this.VIEW_VISIBLE);
+
+        var roleItems = [Item("默认 (default)", "")];
+        var rolePos = 0;
+        var roles = vic['RolePlayList'] || [];
+        for (var k = 0; k < roles.length; k++) {
+            var r = roles[k];
+            roleItems.push(Item(getString(r), r));
+            if (r === String(ttsrv.tts.data['role'])) rolePos = k + 1;
+        }
+        this.roleSpinner.setItems(roleItems);
+        this.roleSpinner.setSelectedPosition(rolePos);
     }
 };
 
 /**
  * ==========================================================
- * 第五部分：本地化字典 (1:1 完整保留)
+ * 第五部分：本地化字典
  * ==========================================================
  */
 const cnLocales = {
