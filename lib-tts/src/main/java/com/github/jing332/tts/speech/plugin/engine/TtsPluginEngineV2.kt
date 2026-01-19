@@ -5,6 +5,7 @@ import android.util.Log
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
+import com.github.jing332.script.runtime.NativeResponse // 👈 补回了这行关键引用！
 import com.github.jing332.script.runtime.console.Console
 import com.github.jing332.script.simple.CompatScriptRuntime
 import com.github.jing332.script.source.toScriptSource
@@ -53,13 +54,12 @@ open class TtsPluginEngineV2(
     fun eval() {
         var scriptCode = plugin.code
         
-        // 🛡️ 安全清洗模式：只移除 Rhino 绝对不支持的关键字
-        // 我们不再尝试转换箭头函数，而是要求插件代码本身必须兼容 ES5
+        // 🛡️ 安全清洗模式
         if (scriptCode.contains("\"use quickjs\"") || scriptCode.contains("'use quickjs'")) {
             scriptCode = scriptCode
-                .replace(Regex("`[\\s\\S]*?`"), "\"\"") // 清洗反引号
-                .replace(Regex("""\b(let|const)\b"""), "var") // let/const -> var
-                .replace(Regex("""\b(async|await)\b"""), "")  // 移除 async/await
+                .replace(Regex("`[\\s\\S]*?`"), "\"\"")
+                .replace(Regex("""\b(let|const)\b"""), "var")
+                .replace(Regex("""\b(async|await)\b"""), "")
         }
 
         try {
@@ -75,7 +75,6 @@ open class TtsPluginEngineV2(
             }
         } catch (e: Exception) {
             Log.e("TtsPluginEngineV2", "Rhino 解析错误: ${e.message}")
-            // 兜底机制：防止 APP 崩溃，显示一个错误提示插件
             val fallbackScript = """
                 var PluginJS = { name: "${plugin.name} (加载失败)", id: "${plugin.pluginId}", version: 0 };
                 var EditorJS = { 
