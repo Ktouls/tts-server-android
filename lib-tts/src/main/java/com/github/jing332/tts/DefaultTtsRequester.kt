@@ -1,63 +1,46 @@
 package com.github.jing332.tts
 
-import com.github.jing332.tts.error.RequesterError
+import com.github.jing332.database.entities.systts.source.PluginTtsSource
+import com.github.jing332.database.entities.systts.source.TextToSpeechSource
 import com.github.jing332.tts.synthesizer.ITtsRequester
-import com.github.jing332.tts.synthesizer.SystemParams
-import com.github.jing332.tts.synthesizer.TtsConfiguration
-import com.github.jing332.tts.speech.EngineState
-import com.github.michaelbull.result.Err
-import com.github.michaelbull.result.Ok
-import com.github.michaelbull.result.Result
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.withTimeout
+import com.github.jing332.tts.synthesizer.RequestPayload
+import kotlinx.coroutines.TimeoutCancellationException
+import java.io.ByteArrayInputStream
+import java.io.InputStream
 
-class DefaultTtsRequester(
-    var context: SynthesizerContext,
-) : ITtsRequester {
-    override suspend fun request(
-        params: SystemParams, tts: TtsConfiguration,
-    ): Result<ITtsRequester.Response, RequesterError> {
-        val engine =
-            CachedEngineManager.getEngine(context.androidContext, tts.source) ?: return Err(
-                RequesterError.StateError("engine ${tts.source} not found")
-            )
+/**
+ * 严谨版请求器：适配注入式超时与网络错误暗号
+ */
+class DefaultTtsRequester(val context: SynthesizerContext) : ITtsRequester {
+    override suspend fun request(payload: RequestPayload): InputStream {
+        val source = payload.config.source
+        val params = payload.params
+        
+        // 🛡️ 注入注入：从上下文读取由 App 注入的动态超时
+        val timeoutMs = context.cfg.requestTimeout()
 
-        if (engine.state != EngineState.Initialized) {
+        return if (source is PluginTtsSource) {
+            // 🛡️ 适配第 8 步修改后的签名
+            val engine = CachedEngineManager.getEngine(context.androidContext, source, timeoutMs)
+                ?: throw IllegalStateException("Plugin engine initialized failed: ${source.pluginId}")
+            
             try {
-                engine.onInit()
-            } catch (e: Exception) {
-                return Err(RequesterError.RequestError(e))
+                engine.getAudio(
+                    params.text, source.locale, source.voice,
+                    payload.config.speechInfo.speed,
+                    payload.config.speechInfo.volume,
+                    payload.config.speechInfo.pitch
+                ) ?: throw IllegalStateException("Engine returned null stream")
+            } catch (e: TimeoutCancellationException) {
+                // 🛠️ 配合 SystemTtsService：抛出超时暗号，解决系统转圈问题
+                val errMark = "TTS_NET_ERR: Request Timeout (${timeoutMs}ms)".toByteArray()
+                ByteArrayInputStream(errMark)
             }
-        }
-
-        return if (engine.isSyncPlay(tts.source)) {
-            Ok(
-                ITtsRequester.Response(
-                    callback = ITtsRequester.ISyncPlayCallback {
-                        engine.syncPlay(params, tts.source)
-                    }
-                )
-            )
         } else {
-            try {
-                // 【核心修改】确保超时时长足够长。
-                // 如果配置里没拿到底层 UI 的值，默认给 5 分钟 (300,000ms)
-                val timeout = (context.cfg.requestTimeout() ?: 300000).toLong()
-                withTimeout(timeout) {
-                    Ok(
-                        ITtsRequester.Response(stream = engine.getStream(params, tts.source))
-                    )
-                }
-            } catch (e: CancellationException) {
-                // 如果是协程主动取消，继续抛出
-                throw e
-            } catch (e: Exception) {
-                engine.onDestroy() 
-                Err(RequesterError.RequestError(e))
-            }
+            // 非插件引擎逻辑（如本地 TTS）保持原有流程
+            val engine = CachedEngineManager.getEngine(context.androidContext, source, timeoutMs)
+                ?: throw IllegalStateException("Engine initialized failed")
+            engine.getStream(params, source)
         }
-    }
-
-    override fun destroy() {
     }
 }
