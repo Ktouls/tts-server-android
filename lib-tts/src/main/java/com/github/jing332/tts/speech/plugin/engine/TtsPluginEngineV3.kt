@@ -18,11 +18,12 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 严谨版 V3：注入式超时控制与 Base64 强力清洗
+ * 适配逻辑：移除对 app 模块的直接依赖，由构造函数接收 requestTimeout 参数
  */
 open class TtsPluginEngineV3(
     val context: Context, 
     var plugin: Plugin,
-    protected val requestTimeout: Long // 🛡️ 注入用户配置
+    protected val requestTimeout: Long // 🛡️ 注入外部参数，修复模块间引用报错
 ) {
     companion object {
         const val TAG = "TtsPluginEngineV3"
@@ -31,6 +32,7 @@ open class TtsPluginEngineV3(
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
+    // 🛡️ 防御性设定：确保超时时间不低于 5s
     private val configTimeoutMs: Long
         get() = requestTimeout.coerceAtLeast(5000L)
 
@@ -118,7 +120,7 @@ open class TtsPluginEngineV3(
                 })();
             """.trimIndent())
 
-            // 🛡️ 严谨：配置时间 + 2秒冗余缓冲
+            // 🛡️ 动态超时：配置时间 + 2秒冗余缓冲
             val result = withTimeout(configTimeoutMs + 2000L) { deferred.await() }
             return@withContext handleResult(result)
 
@@ -132,6 +134,7 @@ open class TtsPluginEngineV3(
 
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
+        // 🛡️ 强力清洗：移除所有空白符、换行符、回车符，防止 Base64 解码器挂起
         val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
         if (data.startsWith("http")) {
             return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { null }
