@@ -11,13 +11,22 @@ import com.github.jing332.tts.speech.plugin.PluginTtsProvider
 
 @Suppress("UNCHECKED_CAST")
 object SpeechServiceFactory {
-    fun createEngine(context: Context, source: TextToSpeechSource): TextToSpeechProvider<TextToSpeechSource>? {
+    /**
+     * 🛠️ 严谨适配：新增 requestTimeout 参数，实现跨模块配置注入
+     */
+    fun createEngine(
+        context: Context, 
+        source: TextToSpeechSource, 
+        requestTimeout: Long // 🛡️ 注入外部超时配置
+    ): TextToSpeechProvider<TextToSpeechSource>? {
         return when (source) {
             is LocalTtsSource -> LocalTtsProvider(context, source.engine)
             is PluginTtsSource -> {
+                // 🛡️ 寻找插件实体，并注入超时参数
                 PluginTtsProvider(
                     context,
-                    source.plugin ?: dbm.pluginDao.getEnabled(source.pluginId) ?: return null
+                    source.plugin ?: dbm.pluginDao.getEnabled(source.pluginId) ?: return null,
+                    requestTimeout
                 )
             }
 
