@@ -1,7 +1,7 @@
 package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
-import android.util.Log 
+import android.util.Log
 import android.widget.LinearLayout
 import com.github.jing332.common.utils.dp
 import com.github.jing332.common.utils.toCountryFlagEmoji
@@ -11,8 +11,13 @@ import org.mozilla.javascript.ScriptRuntime
 import org.mozilla.javascript.ScriptableObject
 import java.util.Locale
 
-// 继承自 TtsPluginEngineV2，自动获得父类的正则净化能力
-class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(context, plugin) {
+// 🛠️ 关键修改：增加 timeoutMs 参数，匹配 Manager 的调用
+class TtsPluginUiEngineV2(
+    context: Context, 
+    plugin: Plugin, 
+    timeoutMs: Long = 5000L
+) : TtsPluginEngineV2(context, plugin, timeoutMs) {
+    
     companion object {
         private const val TAG = "TtsPluginUiEngineV2"
 
