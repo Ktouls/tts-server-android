@@ -14,7 +14,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 严谨版 V3 引擎：修复 FileUtils 编译错误，锁定内部文件目录
+ * 工业级 V3 引擎：完整注入 ttsrv 环境，支持文件操作、Async/Await 及 Base64 解码
  */
 open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     companion object {
@@ -29,7 +29,9 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    // 严谨的桥接接口
+    /**
+     * JS 桥接接口：负责将 JS 逻辑映射回 Android 原生功能
+     */
     interface JsBridge {
         fun onSuccess(result: Any?)
         fun onError(error: String)
@@ -48,7 +50,7 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         val deferred = CompletableDeferred<Any?>()
 
         try {
-            // 1. 注入 nativeBridge，使用标准 File API 确保编译通过
+            // 1. 注入桥接对象：映射核心文件 IO 与网络请求
             quickJs.set("nativeBridge", JsBridge::class.java, object : JsBridge {
                 override fun onSuccess(result: Any?) { deferred.complete(result) }
                 override fun onError(error: String) { deferred.completeExceptionally(RuntimeException(error)) }
@@ -64,7 +66,6 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                     } catch (e: Exception) { "ERROR: ${e.message}" }
                 }
 
-                // 使用 context.filesDir 确保路径安全性与 ES5 引擎一致
                 override fun fileExist(path: String): Boolean = File(context.filesDir, path).exists()
                 override fun readTxtFile(path: String): String = File(context.filesDir, path).let { 
                     if (it.exists()) it.readText() else "" 
@@ -76,8 +77,8 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 override fun getTtsData(key: String): String = plugin.userVars[key] ?: ""
             })
 
-            // 2. 环境初始化 (注入 ttsrv 模拟对象)
-            val bvValue = plugin.userVars["bv"] ?: ""
+            // 2. 环境初始化：构造模拟 ttsrv 对象与 Fetch API
+            val bvValue = (plugin.userVars["bv"] ?: "").replace("\"", "\\\"")
             val ttsDataJson = "{\"bv\": \"$bvValue\"}"
             
             quickJs.evaluate("""
@@ -100,10 +101,10 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 };
             """.trimIndent())
 
-            // 3. 执行插件代码
+            // 3. 执行插件脚本
             quickJs.evaluate(plugin.code, "plugin.js")
 
-            // 4. 调用异步逻辑
+            // 4. 调用异步 getAudio 并等待 Promise 结果
             val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
             quickJs.evaluate("""
                 (async () => {
@@ -118,32 +119,38 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 })();
             """.trimIndent())
 
+            // 设置 35 秒防御性超时
             val result = withTimeout(35000L) { deferred.await() }
             return@withContext handleResult(result)
 
         } catch (e: Exception) {
-            Log.e(TAG, "QuickJS 执行失败: ${e.message}")
+            Log.e(TAG, "QuickJS 执行异常: ${e.message}")
             throw e
         } finally {
-            quickJs.close()
+            quickJs.close() // 严谨释放引擎资源
         }
     }
 
+    /**
+     * 结果判定器：自动分流 URL 下载与 Base64 解码
+     */
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
         val data = result.toString().trim()
         
+        // 分支 1: 判定为网络 URL
         if (data.startsWith("http")) {
             val resp = client.newCall(Request.Builder().url(data).header("User-Agent", DEFAULT_UA).build()).execute()
-            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code} 下载失败")
+            if (!resp.isSuccessful) throw Exception("HTTP 下载失败: ${resp.code}")
             return resp.body?.byteStream()
         }
 
+        // 分支 2: 判定为 Base64 音频数据
         return try {
             val audioBytes = Base64.decode(data, Base64.DEFAULT)
             ByteArrayInputStream(audioBytes)
         } catch (e: Exception) {
-            throw Exception("返回数据格式错误 (非URL且非Base64): ${data.take(100)}")
+            throw Exception("返回格式无法解析 (非合法URL或Base64): ${data.take(100)}")
         }
     }
 }
