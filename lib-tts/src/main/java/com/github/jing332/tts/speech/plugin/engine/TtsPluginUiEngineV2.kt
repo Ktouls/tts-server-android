@@ -10,6 +10,9 @@ import com.github.jing332.script.toMap
 import org.mozilla.javascript.ScriptableObject
 import java.util.Locale
 
+/**
+ * UI 渲染引擎：通过极致的代码剥离，确保 Rhino 兼容 V3 脚本中的 UI 部分
+ */
 class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(context, plugin) {
     companion object {
         const val OBJ_UI_JS = "EditorJS"
@@ -26,24 +29,23 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
     fun dp(px: Int): Int = px.dp
 
     /**
-     * 🛠️ 强力净化逻辑：
-     * 1. 移除 "use quickjs" 声明。
-     * 2. 移除整个 PluginJS 块（支持 var/let/const）。
-     * 3. 将剩余代码中的 let/const 替换为 var，并移除 async/await 关键字以兼容 Rhino。
+     * 🛠️ 强力防御性执行：
+     * 在 Rhino 看到代码前，强制抹除所有 ES6+ 关键字和 PluginJS 逻辑块
      */
     override fun execute(script: String): Any? {
         var finalScript = script
-        if (script.contains("\"use quickjs\"", ignoreCase = true)) {
+        if (script.contains("\"use quickjs\"", ignoreCase = true) || script.contains("'use quickjs'", ignoreCase = true)) {
             finalScript = finalScript
                 .replace("\"use quickjs\"", "")
                 .replace("'use quickjs'", "")
-                // 彻底剥离 PluginJS 块，防止其内部的 async/await 干扰 Rhino
+                // 1. 抹除 PluginJS 块：兼容 var/let/const 声明，防止其内部的 async 逻辑干扰词法解析
                 .replace(Regex("""(var|let|const)\s+PluginJS\s*=\s*\{[\s\S]*?\}\s*;?""", RegexOption.MULTILINE), "var PluginJS = { getAudio: function(){ return ''; } };")
-                // 将 UI 部分可能存在的 ES6 关键字转为 ES5
+                // 2. 语法转换：将 let/const 统一降级为 var
                 .replace(Regex("""\b(let|const)\b"""), "var")
+                // 3. 关键字剔除：移除所有 async 和 await，确保 Rhino 的语法树正常构建
                 .replace(Regex("""\b(async|await)\b"""), "")
             
-            Log.d(TAG, "V3 脚本已完成 ES5 兼容性强力净化")
+            Log.d(TAG, "已完成针对 Rhino 环境的 ES6 强力净化")
         }
         return super.execute(PackageImporter.default + finalScript)
     }
