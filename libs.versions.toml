@@ -40,21 +40,20 @@ androidsgv = "1.4"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
-#noinspection GradleDependency  // crypto module issue
 hutool = "5.8.19"
 media = "1.5.1"
 desugar = "2.1.5"
 splitties = "3.0.0"
 
 hanlp = "portable-1.8.6"
+rhino = "1.8.0"
 logging = "7.0.0"
 slf4j = "2.0.16"
 logback = "1.5.7"
 logback-android = "3.0.0"
 kotlin-result = "2.0.1"
 
-# 👇👇👇 GraalVM JS 引擎版本 👇👇👇
-graalvm = "24.1.1"
+graalvm = "23.1.2"
 sardine = "v0.8"
 
 [libraries]
@@ -62,7 +61,6 @@ desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desuga
 coreKtx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 activityKtx = { module = "androidx.activity:activity-ktx", version.ref = "activityKtx" }
-#noinspection GradleDependency
 localbroadcast = { module = "androidx.localbroadcastmanager:localbroadcastmanager", version = "1.0.0" }
 roomRuntime = { module = "androidx.room:room-runtime", version.ref = "room" }
 roomCompiler = { module = "androidx.room:room-compiler", version.ref = "room" }
@@ -142,13 +140,10 @@ slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 logback-android = { module = "com.github.tony19:logback-android", version.ref = "logback-android" }
 hanlp = { group = "com.hankcs", name = "hanlp", version.ref = "hanlp" }
+mozilla-rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 
-# 👇👇👇 GraalVM 库定义 👇👇👇
 graalvm-polyglot = { module = "org.graalvm.polyglot:polyglot", version.ref = "graalvm" }
 graalvm-js = { module = "org.graalvm.polyglot:js", version.ref = "graalvm" }
-
-# 注释掉 Rhino 库定义，准备迁移后移除
-# mozilla-rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 
 sardine = { group = "com.github.thegrizzlylabs", name = "sardine-android", version.ref = "sardine" }
 
