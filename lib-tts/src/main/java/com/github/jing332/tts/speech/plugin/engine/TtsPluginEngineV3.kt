@@ -17,6 +17,10 @@ import java.io.File
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
+/**
+ * V3 引擎最终版：同步执行模式 (Synchronous Mode)
+ * 解决 async/await 导致的 EventLoop 超时问题
+ */
 open class TtsPluginEngineV3(
     val context: Context, 
     var plugin: Plugin,
@@ -42,11 +46,9 @@ open class TtsPluginEngineV3(
     }
 
     interface JsBridge {
-        fun onSuccess(result: Any?)
-        fun onError(error: String)
         fun log(msg: String)
         fun error(msg: String)
-        fun fetch(url: String, options: String): String
+        fun fetch(url: String, options: String): String // 同步网络请求
         fun fileExist(path: String): Boolean
         fun readTxtFile(path: String): String
         fun writeTxtFile(path: String, content: String)
@@ -61,12 +63,10 @@ open class TtsPluginEngineV3(
             console.error("V3 初始化失败: ${e.message}")
             throw e 
         }
-        val deferred = CompletableDeferred<Any?>()
-
+        
         try {
+            // 注册 Native 桥接
             quickJs.set("nativeBridge", JsBridge::class.java, object : JsBridge {
-                override fun onSuccess(result: Any?) { deferred.complete(result) }
-                override fun onError(error: String) { deferred.completeExceptionally(RuntimeException(error)) }
                 override fun log(msg: String) { console.info("[JS] $msg") }
                 override fun error(msg: String) { console.error("[JS] $msg") }
 
@@ -86,6 +86,7 @@ open class TtsPluginEngineV3(
                             val contentType = opt.optJSONObject("headers")?.optString("Content-Type") ?: "application/json"
                             reqBuilder.post(bodyStr.toRequestBody(contentType.toMediaTypeOrNull()))
                         }
+                        // 同步执行，阻塞直到返回
                         val resp = client.newCall(reqBuilder.build()).execute()
                         resp.body?.string() ?: ""
                     } catch (e: Exception) { "ERROR: ${e.message}" }
@@ -99,7 +100,7 @@ open class TtsPluginEngineV3(
 
             val bvValue = (plugin.userVars["bv"] ?: "").replace("\"", "\\\"")
             
-            // 🛠️ 关键修复：使用 var 定义 fetch，确保它在全局作用域生效
+            // 🛠️ 注入同步环境 (Polyfill)
             quickJs.evaluate("""
                 var console = {
                     log: function(m) { nativeBridge.log(String(m)); },
@@ -113,60 +114,62 @@ open class TtsPluginEngineV3(
                     tts: { data: {"bv": "$bvValue"} }
                 };
 
-                var Buffer = { from: function(data, type) { return data; } };
-
-                var http = {
-                    post: function(url, body, headers) {
-                        var bodyStr = (typeof body === 'object') ? JSON.stringify(body) : String(body);
-                        var resStr = nativeBridge.fetch(url, JSON.stringify({method: 'POST', body: bodyStr, headers: headers}));
-                        if (resStr.startsWith("ERROR:")) throw new Error(resStr);
-                        return {
-                            json: function() { return JSON.parse(resStr); },
-                            body: function() { return { string: function() { return resStr; } }; }
-                        };
-                    },
-                    get: function(url, headers) {
-                        var resStr = nativeBridge.fetch(url, JSON.stringify({method: 'GET', headers: headers}));
-                        if (resStr.startsWith("ERROR:")) throw new Error(resStr);
-                        return {
-                            json: function() { return JSON.parse(resStr); },
-                            body: function() { return { string: function() { return resStr; } }; }
-                        };
-                    }
-                };
-
-                // 使用 var 确保 fetch 也是全局的
-                var fetch = async function(url, opt) {
+                // 同步 fetch 实现：不需要 await，直接返回结果对象
+                var fetch = function(url, opt) {
                     if (!opt) opt = {};
-                    var res = nativeBridge.fetch(url, JSON.stringify(opt));
-                    if (res.startsWith("ERROR:")) throw new Error(res);
-                    return { 
-                        text: async function() { return res; }, 
-                        json: async function() { return JSON.parse(res); } 
+                    var bodyStr = opt.body;
+                    if (typeof bodyStr === 'object') bodyStr = JSON.stringify(bodyStr);
+                    // 更新 options 里的 body
+                    var newOpt = {
+                        method: opt.method || 'GET',
+                        headers: opt.headers || {},
+                        body: bodyStr || ""
+                    };
+                    
+                    var resStr = nativeBridge.fetch(url, JSON.stringify(newOpt));
+                    
+                    if (resStr.startsWith("ERROR:")) throw new Error(resStr);
+                    
+                    return {
+                        text: function() { return resStr; },
+                        json: function() { return JSON.parse(resStr); }
                     };
                 };
+                
+                // 兼容旧版 http 对象
+                var http = {
+                    post: function(url, body, headers) {
+                        return fetch(url, { method: 'POST', body: body, headers: headers });
+                    },
+                    get: function(url, headers) {
+                        return fetch(url, { method: 'GET', headers: headers });
+                    }
+                };
+                
+                var Buffer = { from: function(d, t) { return d; } };
             """.trimIndent())
 
+            // 加载用户插件代码
             quickJs.evaluate(plugin.code, "plugin.js")
 
             val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
-            quickJs.evaluate("""
-                (async () => {
+            
+            // 🛠️ 关键修改：直接执行并获取返回值，不使用 async/await，也不使用 callback
+            // 这样会强制 QuickJS 同步等待结果，彻底解决超时问题
+            val resultJs = quickJs.evaluate("""
+                (function() {
                     try {
-                        const res = $OBJ_PLUGIN_JS.$FUNC_GET_AUDIO("$text", "$locale", "$voice", $r, $v, $p);
-                        nativeBridge.onSuccess(res instanceof Promise ? await res : res);
-                    } catch (e) { 
-                        console.error("JS Error: " + e.message);
-                        nativeBridge.onError(e.message); 
+                        return $OBJ_PLUGIN_JS.$FUNC_GET_AUDIO("$text", "$locale", "$voice", $r, $v, $p);
+                    } catch (e) {
+                        return "ERROR:" + e.message;
                     }
                 })();
             """.trimIndent())
 
-            val result = withTimeout(configTimeoutMs + 2000L) { deferred.await() }
-            return@withContext handleResult(result)
+            return@withContext handleResult(resultJs)
 
         } catch (e: Exception) {
-            console.error("V3 Exec Error: ${e.message}")
+            console.error("V3 执行异常: ${e.message}")
             e.printStackTrace()
             null
         } finally {
@@ -175,13 +178,26 @@ open class TtsPluginEngineV3(
     }
 
     private fun handleResult(result: Any?): InputStream? {
-        if (result == null) return null
-        val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
+        if (result == null) {
+            console.error("V3 返回空值")
+            return null
+        }
+        val data = result.toString().trim()
+        
+        if (data.startsWith("ERROR:")) {
+            console.error("插件执行报错: ${data.removePrefix("ERROR:")}")
+            return null
+        }
+        
         if (data.startsWith("http")) {
             return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { null }
         }
+        
         return try { 
             ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT)) 
-        } catch (e: Exception) { null }
+        } catch (e: Exception) { 
+            console.error("Base64解码失败，长度: ${data.length}")
+            null 
+        }
     }
 }
