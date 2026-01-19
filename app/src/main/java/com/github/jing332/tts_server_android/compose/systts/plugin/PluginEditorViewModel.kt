@@ -56,7 +56,6 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         """.trimIndent()
     }
 
-    // 🛠️ 修正1: 类型改为 UI 子类 TtsPluginUiEngineV2
     private var mEngine: TtsPluginUiEngineV2? = null
     
     val engine: TtsPluginUiEngineV2
@@ -90,7 +89,7 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
     fun updatePlugin(plugin: Plugin) {
         val timeout = SysTtsConfig.requestTimeout
         
-        // 🛠️ 修正2: 实例化 TtsPluginUiEngineV2，并确保 timeout 转为 Long
+        // 实例化 TtsPluginUiEngineV2 (使用 Long 类型的 timeout)
         mEngine = mEngine?.also { it.plugin = plugin }
             ?: TtsPluginUiEngineV2(getApplication(), plugin, timeout.toLong()).also { it.console = console }
             
@@ -141,7 +140,6 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
 
     private suspend fun debugV2() {
         kotlin.runCatching {
-            // 这里现在不会报错了，因为 engine 是 TtsPluginUiEngineV2
             val sampleRate = engine.getSampleRate(pluginSource.locale, pluginSource.voice)
             console.debug("采样率: $sampleRate")
         }.onFailure { writeErrorLog(it) }
@@ -169,7 +167,7 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         val v3Engine = TtsPluginEngineV3(
             context = getApplication(), 
             plugin = tempPlugin, 
-            requestTimeout = SysTtsConfig.requestTimeout.toLong() // 确保转 Long
+            requestTimeout = SysTtsConfig.requestTimeout.toLong()
         )
         
         try {
@@ -205,8 +203,8 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
             console.error("V3 调试出错: ${e.message}")
             e.stackTrace.take(3).forEach { console.error("\t at $it") }
         } finally {
-            // 🛠️ 修正3: 改为 destroy()
-            runCatching { v3Engine.destroy() }
+            // 🛠️ 关键修正：改用 onStop()，这是本项目统一的销毁方法名
+            runCatching { v3Engine.onStop() }
         }
     }
 
