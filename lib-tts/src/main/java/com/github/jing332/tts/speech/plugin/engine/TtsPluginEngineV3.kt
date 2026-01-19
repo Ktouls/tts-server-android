@@ -8,13 +8,14 @@ import com.github.jing332.database.entities.plugin.Plugin
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 工业级 V3 引擎：完整注入 ttsrv 环境，支持文件操作、Async/Await 及 Base64 解码
+ * 加固版 V3 引擎：增加 Fetch 状态追踪与异步安全回调
  */
 open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     companion object {
@@ -25,13 +26,10 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
     }
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    /**
-     * JS 桥接接口：负责将 JS 逻辑映射回 Android 原生功能
-     */
     interface JsBridge {
         fun onSuccess(result: Any?)
         fun onError(error: String)
@@ -46,54 +44,54 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         text: String, locale: String, voice: String,
         rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f
     ): InputStream? = withContext(Dispatchers.IO) {
-        val quickJs = QuickJs.create()
+        // 🛠️ 严谨：每次请求创建独立引擎，确保并发安全，用完立即 close
+        val quickJs = try { QuickJs.create() } catch (e: Exception) { 
+            Log.e(TAG, "QuickJS 实例创建失败"); throw e 
+        }
         val deferred = CompletableDeferred<Any?>()
 
         try {
-            // 1. 注入桥接对象：映射核心文件 IO 与网络请求
             quickJs.set("nativeBridge", JsBridge::class.java, object : JsBridge {
-                override fun onSuccess(result: Any?) { deferred.complete(result) }
-                override fun onError(error: String) { deferred.completeExceptionally(RuntimeException(error)) }
+                override fun onSuccess(result: Any?) { 
+                    Log.d(TAG, "JS 回调成功"); deferred.complete(result) 
+                }
+                override fun onError(error: String) { 
+                    Log.e(TAG, "JS 回调失败: $error"); deferred.completeExceptionally(RuntimeException(error)) 
+                }
                 
                 override fun fetch(url: String, options: String): String {
+                    Log.d(TAG, "开始网络请求: $url")
                     return try {
                         val reqBuilder = Request.Builder().url(url).header("User-Agent", DEFAULT_UA)
                         if (options.contains("POST")) {
                             val body = Regex(""""body"\s*:\s*"(.*?)"""").find(options)?.groupValues?.get(1) ?: ""
-                            reqBuilder.post(okhttp3.RequestBody.create(null, body))
+                            reqBuilder.post(body.toRequestBody(null))
                         }
-                        client.newCall(reqBuilder.build()).execute().body?.string() ?: ""
-                    } catch (e: Exception) { "ERROR: ${e.message}" }
+                        val response = client.newCall(reqBuilder.build()).execute()
+                        val resBody = response.body?.string() ?: ""
+                        Log.d(TAG, "请求响应完成，长度: ${resBody.length}")
+                        resBody
+                    } catch (e: Exception) { 
+                        Log.e(TAG, "Fetch 网络错误: ${e.message}"); "ERROR: ${e.message}" 
+                    }
                 }
 
                 override fun fileExist(path: String): Boolean = File(context.filesDir, path).exists()
-                override fun readTxtFile(path: String): String = File(context.filesDir, path).let { 
-                    if (it.exists()) it.readText() else "" 
-                }
-                override fun writeTxtFile(path: String, content: String) { 
-                    File(context.filesDir, path).writeText(content) 
-                }
-                
+                override fun readTxtFile(path: String): String = File(context.filesDir, path).run { if (exists()) readText() else "" }
+                override fun writeTxtFile(path: String, content: String) { File(context.filesDir, path).writeText(content) }
                 override fun getTtsData(key: String): String = plugin.userVars[key] ?: ""
             })
 
-            // 2. 环境初始化：构造模拟 ttsrv 对象与 Fetch API
+            // 初始化环境
             val bvValue = (plugin.userVars["bv"] ?: "").replace("\"", "\\\"")
-            val ttsDataJson = "{\"bv\": \"$bvValue\"}"
-            
             quickJs.evaluate("""
-                const console = { 
-                    log: (m) => java.lang.System.out.println("[V3] " + m),
-                    error: (m) => java.lang.System.err.println("[V3] " + m)
-                };
-                
+                const console = { log: (m) => java.lang.System.out.println("[V3] " + m), error: (m) => java.lang.System.err.println("[V3] " + m) };
                 const ttsrv = {
                     fileExist: (p) => nativeBridge.fileExist(p),
                     readTxtFile: (p) => nativeBridge.readTxtFile(p),
                     writeTxtFile: (p, c) => nativeBridge.writeTxtFile(p, c),
-                    tts: { data: $ttsDataJson }
+                    tts: { data: {"bv": "$bvValue"} }
                 };
-
                 const fetch = async (url, opt = {}) => {
                     const res = nativeBridge.fetch(url, JSON.stringify(opt));
                     if (res.startsWith("ERROR:")) throw new Error(res);
@@ -101,10 +99,8 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 };
             """.trimIndent())
 
-            // 3. 执行插件脚本
             quickJs.evaluate(plugin.code, "plugin.js")
 
-            // 4. 调用异步 getAudio 并等待 Promise 结果
             val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
             quickJs.evaluate("""
                 (async () => {
@@ -119,38 +115,33 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 })();
             """.trimIndent())
 
-            // 设置 35 秒防御性超时
-            val result = withTimeout(35000L) { deferred.await() }
+            // 🛠️ 严谨：将超时时间缩短为 25 秒，并在超时后强制 cancel deferred 防止 UI 挂起
+            val result = withTimeout(25000L) { deferred.await() }
             return@withContext handleResult(result)
 
         } catch (e: Exception) {
-            Log.e(TAG, "QuickJS 执行异常: ${e.message}")
+            Log.e(TAG, "执行生命周期异常: ${e.message}")
+            if (deferred.isActive) deferred.complete(null)
             throw e
         } finally {
-            quickJs.close() // 严谨释放引擎资源
+            quickJs.close() // 🛠️ 强制释放 Native 资源
         }
     }
 
-    /**
-     * 结果判定器：自动分流 URL 下载与 Base64 解码
-     */
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
-        val data = result.toString().trim()
+        val data = result.toString().trim().replace("\n", "").replace("\r", "")
         
-        // 分支 1: 判定为网络 URL
         if (data.startsWith("http")) {
             val resp = client.newCall(Request.Builder().url(data).header("User-Agent", DEFAULT_UA).build()).execute()
-            if (!resp.isSuccessful) throw Exception("HTTP 下载失败: ${resp.code}")
-            return resp.body?.byteStream()
+            return if (resp.isSuccessful) resp.body?.byteStream() else null
         }
 
-        // 分支 2: 判定为 Base64 音频数据
         return try {
             val audioBytes = Base64.decode(data, Base64.DEFAULT)
             ByteArrayInputStream(audioBytes)
         } catch (e: Exception) {
-            throw Exception("返回格式无法解析 (非合法URL或Base64): ${data.take(100)}")
+            Log.e(TAG, "Base64 解码失败: ${e.message}"); null
         }
     }
 }
