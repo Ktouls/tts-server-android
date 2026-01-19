@@ -27,18 +27,27 @@ android {
     }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
+    }
+    packaging {
+        resources {
+            excludes += "META-INF/native-image/**"
+            excludes += "META-INF/truffle/**"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/NOTICE"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/INDEX.LIST"
+        }
     }
 }
 
 dependencies {
     coreLibraryDesugaring(libs.desugar)
 
-    // ✅ 移除 Rhino，引入 GraalVM Polyglot
     api(libs.graalvm.polyglot)
     implementation(libs.graalvm.js)
 
