@@ -11,11 +11,12 @@ import org.mozilla.javascript.ScriptableObject
 import java.util.Locale
 
 /**
- * UI 渲染引擎：通过极致的代码剥离，确保 Rhino 兼容 V3 脚本中的 UI 部分
+ * 增强型 UI 渲染引擎：解决 ES6 语法导致的音色列表空白问题
  */
 class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(context, plugin) {
     companion object {
         const val OBJ_UI_JS = "EditorJS"
+        const val TAG = "TtsPluginUiEngineV2"
     }
 
     private val editUiJsObject: ScriptableObject by lazy {
@@ -29,27 +30,47 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
     fun dp(px: Int): Int = px.dp
 
     /**
-     * 🛠️ 强力防御性执行：
-     * 在 Rhino 看到代码前，强制抹除所有 ES6+ 关键字和 PluginJS 逻辑块
+     * 🛠️ 严谨净化与补丁注入
      */
     override fun execute(script: String): Any? {
         var finalScript = script
         if (script.contains("\"use quickjs\"", ignoreCase = true) || script.contains("'use quickjs'", ignoreCase = true)) {
+            // 1. 注入 ES5 补丁 (Polyfill)
+            val polyfill = """
+                if (!Object.values) {
+                    Object.values = function(obj) {
+                        return Object.keys(obj).map(function(key) { return obj[key]; });
+                    };
+                }
+            """.trimIndent()
+
             finalScript = finalScript
                 .replace("\"use quickjs\"", "")
                 .replace("'use quickjs'", "")
-                // 1. 抹除 PluginJS 块：兼容 var/let/const 声明，防止其内部的 async 逻辑干扰词法解析
+                // 2. 剥离 PluginJS 块
                 .replace(Regex("""(var|let|const)\s+PluginJS\s*=\s*\{[\s\S]*?\}\s*;?""", RegexOption.MULTILINE), "var PluginJS = { getAudio: function(){ return ''; } };")
-                // 2. 语法转换：将 let/const 统一降级为 var
+                // 3. 转换简单的箭头函数 (处理 x => ... 和 (x, y) => ...)
+                .replace(Regex("""\(([^)]*)\)\s*=>"""), "function($1)")
+                .replace(Regex("""\b([a-zA-Z0-9_$]+)\s*=>"""), "function($1)")
+                // 4. 将 const/let 替换为 var
                 .replace(Regex("""\b(let|const)\b"""), "var")
-                // 3. 关键字剔除：移除所有 async 和 await，确保 Rhino 的语法树正常构建
+                // 5. 移除 async/await
                 .replace(Regex("""\b(async|await)\b"""), "")
             
-            Log.d(TAG, "已完成针对 Rhino 环境的 ES6 强力净化")
+            finalScript = polyfill + "\n" + finalScript
+            Log.d(TAG, "已完成针对 Rhino 的高级语法净化与补丁注入")
         }
-        return super.execute(PackageImporter.default + finalScript)
+        
+        return try {
+            super.execute(PackageImporter.default + finalScript)
+        } catch (e: Exception) {
+            // 严谨性：如果解析失败，将错误输出到日志以便排查具体的语法冲突点
+            Log.e(TAG, "Rhino 解析净化后的脚本失败: ${e.message}")
+            null
+        }
     }
 
+    // --- 以下保持原样 ---
     fun getSampleRate(locale: String, voice: String): Int? = try {
         engine.invokeMethod(editUiJsObject, "getAudioSampleRate", locale, voice)?.run {
             if (this is Int) this else (this as Double).toInt()
