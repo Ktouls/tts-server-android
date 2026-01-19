@@ -23,8 +23,12 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
-// 保持 open class 不变，供 UI 引擎继承
-open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
+// 🛠️ 关键修改：增加 timeoutMs 参数，解决 "Too many arguments" 报错
+open class TtsPluginEngineV2(
+    val context: Context, 
+    var plugin: Plugin,
+    val timeoutMs: Long = 5000L 
+) {
     companion object {
         const val OBJ_PLUGIN_JS = "PluginJS"
         const val FUNC_GET_AUDIO = "getAudio"
@@ -50,29 +54,19 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
-    /**
-     * 关键修改：eval()
-     * 在这里对 V3 插件代码进行“降级清洗”，防止 Rhino 崩溃导致白屏
-     */
+    // 🛡️ 保留净化补丁，防止白屏
     fun eval() {
         var scriptCode = plugin.code
         
-        // 🛡️ 注入补丁：如果检测到是 V3 (QuickJS) 插件，进行语法清洗
         if (scriptCode.contains("\"use quickjs\"") || scriptCode.contains("'use quickjs'")) {
             scriptCode = scriptCode
-                // 1. 清洗反引号 (Rhino 不支持模板字符串) -> 解决白屏核心
                 .replace(Regex("`[\\s\\S]*?`"), "\"\"")
-                // 2. 降级变量声明
                 .replace(Regex("""\b(let|const)\b"""), "var")
-                // 3. 移除异步关键字
                 .replace(Regex("""\b(async|await)\b"""), "")
-                // 4. 清空 getAudio 函数体 (防止复杂语法报错)
                 .replace(Regex("""getAudio\s*:\s*(function)?\s*\(.*?\)\s*(=>)?\s*\{([\s\S]*?)\}"""), "getAudio: function(){}")
-                // 5. 简单的箭头函数降级
                 .replace(Regex("""\((.*?)\)\s*=>"""), "function($1)")
         }
 
-        // 执行处理后的代码
         execute(scriptCode)
         
         pluginJsObj.apply {
