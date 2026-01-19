@@ -21,39 +21,7 @@ import java.nio.charset.StandardCharsets
 class PluginEditorViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "PluginEditViewModel"
-        
-        private val DEFAULT_V3_TEMPLATE = """
-            // 💡 引擎引导: 首行保留 "use quickjs" 启用 V3 引擎 (支持 ES6/async/await)
-            "use quickjs";
-
-            // 全局配置 (Global Config)
-            const CONFIG = {
-                sampleRate: 24000,
-                needDecode: true
-            };
-
-            let PluginJS = {
-                name: "新插件示例",
-                id: "com.example.v3",
-                author: "User",
-                version: 1,
-                vars: {},
-                
-                // 核心合成逻辑
-                getAudio: async (text, locale, voice, rate, volume, pitch) => {
-                    console.log("正在合成: " + text);
-                    // TODO: 在此实现 fetch 请求
-                    return null; 
-                }
-            };
-            
-            let EditorJS = {
-                getAudioSampleRate: () => CONFIG.sampleRate,
-                isNeedDecode: () => CONFIG.needDecode,
-                getLocales: () => ["zh-CN"],
-                getVoices: (locale) => ({ "voice1": "默认音色" })
-            };
-        """.trimIndent()
+        private val DEFAULT_V3_TEMPLATE = "\"use quickjs\";\n"
     }
 
     private var mEngine: TtsPluginUiEngineV2? = null
@@ -88,7 +56,6 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
 
     fun updatePlugin(plugin: Plugin) {
         val timeout = SysTtsConfig.requestTimeout
-        
         mEngine = mEngine?.also { it.plugin = plugin }
             ?: TtsPluginUiEngineV2(getApplication(), plugin, timeout.toLong()).also { it.console = console }
             
@@ -111,7 +78,6 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         mDebugJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 updateCode(code)
-                // 智能分流
                 val isV3 = code.contains("\"use quickjs\"") || code.contains("'use quickjs'")
                 
                 if (isV3) {
@@ -166,7 +132,8 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         val v3Engine = TtsPluginEngineV3(
             context = getApplication(), 
             plugin = tempPlugin, 
-            requestTimeout = SysTtsConfig.requestTimeout.toLong()
+            requestTimeout = SysTtsConfig.requestTimeout.toLong(),
+            console = console // 🛠️ 关键：把控制台传给 V3
         )
         
         try {
@@ -201,8 +168,7 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         } catch (e: Exception) {
             console.error("V3 调试出错: ${e.message}")
             e.stackTrace.take(3).forEach { console.error("\t at $it") }
-        } 
-        // 🛠️ 关键修正：彻底移除 finally 块，V3 引擎会自动管理生命周期
+        }
     }
 
     private fun writeErrorLog(t: Throwable) {
