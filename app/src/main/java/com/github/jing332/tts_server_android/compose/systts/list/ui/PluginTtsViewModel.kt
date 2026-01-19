@@ -20,6 +20,7 @@ import com.github.jing332.tts.speech.plugin.PluginTtsProvider
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineManager
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
 import com.github.jing332.tts_server_android.JsConsoleManager
+import com.github.jing332.tts_server_android.conf.SysTtsConfig // 🛡️ 只有在 App 模块中才能 import 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,12 +57,14 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         val context = getApplication<Application>() as Context
         val targetPlugin = plugin ?: getPluginFromDB(source.pluginId)
 
-        // 🛡️ 防御性获取：确保从 Manager 获取的实例是 Ui 引擎
-        val rawEngine = TtsPluginEngineManager.get(context, targetPlugin)
+        // 🛡️ 最优解：由 ViewModel 读取配置并注入给底层 Manager
+        val timeout = SysTtsConfig.requestTimeout
+        val rawEngine = TtsPluginEngineManager.get(context, targetPlugin, timeout)
+        
         engine = if (rawEngine is TtsPluginUiEngineV2) {
             rawEngine
         } else {
-            TtsPluginUiEngineV2(context, targetPlugin).apply { eval() }
+            TtsPluginUiEngineV2(context, targetPlugin, timeout).apply { eval() }
         }
 
         engine.console = JsConsoleManager.ui
@@ -76,9 +79,6 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
     val locales = mutableStateListOf<Pair<String, String>>()
     val voices = mutableStateListOf<TtsPluginUiEngineV2.Voice>()
 
-    /**
-     * 🛠️ 深度加固的加载逻辑
-     */
     suspend fun load(
         context: Context,
         plugin: Plugin?,
@@ -88,22 +88,16 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         withMain { isLoading = true }
         try {
             initEngine(plugin, source)
-
-            // 1. 数据预加载：即使 UI 挂了，数据也必须先尝试加载
             runCatching { engine.onLoadData() }.onFailure { logger.error(it) { "onLoadData 执行失败" } }
 
-            // 2. UI 渲染逻辑：使用 runCatching 隔离异常，防止其阻断后续列表刷新
             withMain {
                 linearLayout.removeAllViews() 
                 runCatching { engine.onLoadUI(context, linearLayout) }.onFailure {
                     logger.error(it) { "onLoadUI 渲染失败，尝试继续加载数据" }
                 }
             }
-
-            // 3. 强制触发数据更新
             updateLocales()
             updateVoices(source.locale)
-
         } catch (t: Throwable) {
             logger.error(t) { "初始化引擎失败" }
             throw t
@@ -114,7 +108,6 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun updateLocales() {
         val list = engine.getLocales().toList()
-        logger.info { "已加载语言列表: ${list.size} 个项" }
         withMain {
             locales.clear()
             locales.addAll(list)
@@ -124,7 +117,6 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun updateVoices(locale: String) {
         if (locale.isBlank()) return 
         val list = engine.getVoices(locale).toList()
-        logger.info { "已加载音频列表 ($locale): ${list.size} 个项" }
         withMain {
             voices.clear()
             voices.addAll(list)
