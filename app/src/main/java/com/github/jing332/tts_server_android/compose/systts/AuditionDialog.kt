@@ -38,14 +38,14 @@ import com.github.jing332.tts.synthesizer.TtsConfiguration
 import com.github.jing332.tts.synthesizer.TtsConfiguration.Companion.toVO
 import com.github.jing332.tts_server_android.R
 import com.github.jing332.tts_server_android.conf.AppConfig
-import com.github.jing332.tts_server_android.conf.SysTtsConfig // 🛡️ 导入系统配置
+import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.IOException
 import splitties.init.appCtx
-
+import java.nio.charset.StandardCharsets
 
 private val logger = KotlinLogging.logger("AuditionDialog")
 
@@ -72,7 +72,7 @@ fun AuditionDialog(
     LaunchedEffect(systts) {
         launch(Dispatchers.IO) {
             try {
-                // 🛡️ 修正：读取 SysTtsConfig 并注入动态超时参数
+                // 🛡️ 注入：读取系统超时配置
                 val timeout = SysTtsConfig.requestTimeout
                 val e = engine ?: CachedEngineManager.getEngine(appCtx, config.source, timeout)
                 ?: throw IllegalStateException("engine is null")
@@ -83,6 +83,15 @@ fun AuditionDialog(
                 } else {
                     val stream = e.getStream(SystemParams(text = text), config.source)
                     val audio = stream.readBytes()
+
+                    // 🛡️ 严谨判定：识别来自 Requester 的超时暗号，确保 UI 提示准确
+                    if (audio.size < 512) {
+                        val str = String(audio, StandardCharsets.UTF_8)
+                        if (str.startsWith("TTS_NET_ERR:")) {
+                            throw IOException(str.replace("TTS_NET_ERR:", "网络超时: "))
+                        }
+                    }
+
                     val rateAndMime =
                         com.github.jing332.common.audio.AudioDecoder.getSampleRateAndMime(audio)
                     withMain {
@@ -101,7 +110,7 @@ fun AuditionDialog(
                     onDismissRequest()
                 }
             } catch (e: IOException) {
-                error = e.cause.toString()
+                error = e.message ?: e.cause.toString()
             } catch (e: Exception) {
                 error = e.messageChain
                 logger.warn { e.stackTraceToString() }
@@ -139,5 +148,4 @@ fun AuditionDialog(
             TextButton(onClick = onDismissRequest) { Text(stringResource(id = R.string.cancel)) }
         }
     )
-
 }
