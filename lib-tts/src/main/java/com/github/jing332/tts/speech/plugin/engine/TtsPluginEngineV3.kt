@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import app.cash.quickjs.QuickJs
-import com.github.jing332.conf.SysTtsConfig
+import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.database.entities.plugin.Plugin
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -28,9 +28,9 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    // 🛠️ 动态读取：将秒转换为毫秒，防御性设定最小 5s
+    // 🛡️ 严谨：对接 SysTtsConfig 并进行防御性限值
     private val configTimeoutMs: Long
-        get() = (SysTtsConfig.requestTimeout * 1000L).coerceAtLeast(5000L)
+        get() = (SysTtsConfig.requestTimeout).coerceAtLeast(5000L)
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -116,7 +116,7 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 })();
             """.trimIndent())
 
-            // 🛠️ 动态超时：配置时间 + 2秒冗余缓冲
+            // 🛡️ 动态超时：配置时间 + 2秒冗余
             val result = withTimeout(configTimeoutMs + 2000L) { deferred.await() }
             return@withContext handleResult(result)
 
@@ -130,7 +130,6 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
 
     private fun handleResult(result: Any?): InputStream? {
         if (result == null) return null
-        // 🛠️ 强力清洗：移除所有空白符、换行符、回车符，防止 Base64 解码器挂起
         val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
         if (data.startsWith("http")) {
             return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { null }
