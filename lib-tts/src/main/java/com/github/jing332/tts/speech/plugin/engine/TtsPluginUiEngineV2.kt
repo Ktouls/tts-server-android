@@ -12,8 +12,13 @@ import java.util.Locale
 
 /**
  * 增强型 UI 渲染引擎：解决 ES6 语法导致的音色列表空白问题
+ * 适配版：通过构造函数注入 timeout 解决模块间依赖编译问题
  */
-class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(context, plugin) {
+class TtsPluginUiEngineV2(
+    context: Context, 
+    plugin: Plugin, 
+    timeout: Long // 🛡️ 注入超时参数
+) : TtsPluginEngineV2(context, plugin, timeout) { // 🛡️ 传递给父类构造函数
     companion object {
         const val OBJ_UI_JS = "EditorJS"
         const val TAG = "TtsPluginUiEngineV2"
