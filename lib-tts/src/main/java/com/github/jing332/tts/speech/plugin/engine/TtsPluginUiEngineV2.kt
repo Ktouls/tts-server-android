@@ -11,6 +11,9 @@ import org.mozilla.javascript.ScriptRuntime
 import org.mozilla.javascript.ScriptableObject
 import java.util.Locale
 
+/**
+ * UI 渲染引擎：负责在插件编辑界面加载音色列表及 UI 交互逻辑
+ */
 class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(context, plugin) {
     companion object {
         const val OBJ_UI_JS = "EditorJS"
@@ -27,16 +30,18 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
     fun dp(px: Int): Int = px.dp
 
     /**
-     * 🛠️ 严谨修复：针对 V3 插件，在 Rhino 执行前净化 ES6 语法
+     * 🛠️ 严谨修复：ES6 语法净化
+     * 针对 V3 插件，在 Rhino 执行前通过正则移除 PluginJS 块，防止词法解析错误导致 UI 崩溃
      */
     override fun execute(script: String): Any? {
         var finalScript = script
         if (script.contains("\"use quickjs\"", ignoreCase = true)) {
-            // 屏蔽 PluginJS 块，防止 Rhino 触发词法错误 (如 async/await)
-            // 我们通过正则将 PluginJS 替换为简单的模拟对象，仅保留 EditorJS 运行环境
-            finalScript = script.replace(Regex("""var\s+PluginJS\s*=\s*\{[\s\S]*?};""", RegexOption.MULTILINE), "var PluginJS = { getAudio: function(){ return ''; } };")
-            finalScript = finalScript.replace(Regex("""let\s+PluginJS\s*=\s*\{[\s\S]*?};""", RegexOption.MULTILINE), "let PluginJS = { getAudio: function(){ return ''; } };")
-            Log.d(TAG, "V3 脚本已通过正则净化，供 Rhino 渲染 UI")
+            // 将包含 async/await 的 PluginJS 逻辑块替换为 Rhino 可识别的模拟对象
+            finalScript = script.replace(Regex("""var\s+PluginJS\s*=\s*\{[\s\S]*?};""", RegexOption.MULTILINE), 
+                "var PluginJS = { getAudio: function(){ return ''; } };")
+            finalScript = finalScript.replace(Regex("""let\s+PluginJS\s*=\s*\{[\s\S]*?};""", RegexOption.MULTILINE), 
+                "let PluginJS = { getAudio: function(){ return ''; } };")
+            Log.d(TAG, "V3 脚本 UI 兼容性净化完成")
         }
         return super.execute(PackageImporter.default + finalScript)
     }
@@ -46,7 +51,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
             if (this is Int) this else (this as Double).toInt()
         }
     } catch (e: Exception) { 
-        Log.e(TAG, "getSampleRate 失败: ${e.message}")
+        Log.e(TAG, "获取采样率失败: ${e.message}")
         null 
     }
 
@@ -67,7 +72,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
             else -> emptyMap()
         }
     } catch (e: Exception) { 
-        Log.e(TAG, "getLocales 失败: ${e.message}")
+        Log.e(TAG, "获取语言列表失败: ${e.message}")
         emptyMap() 
     }
 
@@ -80,7 +85,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
             }
         } else emptyList()
     } catch (e: Exception) { 
-        Log.e(TAG, "getVoices 失败: ${e.message}")
+        Log.e(TAG, "获取音色列表失败: ${e.message}")
         emptyList() 
     }
 
