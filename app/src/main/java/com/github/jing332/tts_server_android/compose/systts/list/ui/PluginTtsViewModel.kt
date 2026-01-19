@@ -17,10 +17,9 @@ import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.database.entities.systts.source.TextToSpeechSource
 import com.github.jing332.tts.speech.TextToSpeechProvider
 import com.github.jing332.tts.speech.plugin.PluginTtsProvider
-import com.github.jing332.tts.speech.plugin.TtsPluginEngineManager
+import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineManager
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
 import com.github.jing332.tts_server_android.JsConsoleManager
-import com.github.jing332.tts_server_android.app
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,8 +44,10 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
 
     @Suppress("UNCHECKED_CAST")
     fun service(): TextToSpeechProvider<TextToSpeechSource> {
+        // 修正：将 engine 赋值逻辑与 Provider 重构后的逻辑对齐
         return PluginTtsProvider(getApplication<Application>() as Context, engine.plugin).also {
-            it.engine = engine
+            // 注意：重构后的 Provider 内部通过 EngineManager 获取实例，
+            // 这里的 engine 赋值主要用于 UI 状态同步
         } as TextToSpeechProvider<TextToSpeechSource>
     }
 
@@ -56,9 +57,17 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
             if (plugin != null && engine.plugin.pluginId == plugin.pluginId) return
         }
 
-        engine = if (plugin == null)
-            TtsPluginEngineManager.get(getApplication<Application>() as Context, getPluginFromDB(source.pluginId))
-        else TtsPluginUiEngineV2(getApplication<Application>() as Context, plugin).apply { eval() }
+        // 修正：使用更新后的 TtsPluginEngineManager 路径及类型处理
+        val context = getApplication<Application>() as Context
+        val targetPlugin = plugin ?: getPluginFromDB(source.pluginId)
+        
+        // 严谨逻辑：确保从 Manager 获取的是具有 UI 渲染能力的 TtsPluginUiEngineV2
+        val rawEngine = TtsPluginEngineManager.get(context, targetPlugin)
+        engine = if (rawEngine is TtsPluginUiEngineV2) {
+            rawEngine
+        } else {
+            TtsPluginUiEngineV2(context, targetPlugin).apply { eval() }
+        }
 
         engine.console = JsConsoleManager.ui
         engine.source = source
@@ -68,7 +77,6 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         dbm.pluginDao.getEnabled(pluginId = id)
             ?: throw IllegalStateException("Plugin $id not found from database")
 
-    // 修正：初始化为 false，确保 UI 层能初步渲染容器以触发 load
     var isLoading by mutableStateOf(false)
     val locales = mutableStateListOf<Pair<String, String>>()
     val voices = mutableStateListOf<TtsPluginUiEngineV2.Voice>()
@@ -86,13 +94,14 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
                 engine.onLoadData()
 
                 withMain {
-                    linearLayout.removeAllViews() // 修正：清理可能残留的旧插件 UI
+                    linearLayout.removeAllViews() 
                     engine.onLoadUI(context, linearLayout)
                 }
 
                 updateLocales()
                 updateVoices(source.locale)
             } catch (t: Throwable) {
+                logger.error(t) { "加载插件 UI 失败" }
                 throw t
             } finally {
                 withMain { isLoading = false }
@@ -108,7 +117,7 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun updateVoices(locale: String) {
-        if (locale.isBlank()) return // 修正：空语言不触发更新
+        if (locale.isBlank()) return 
         val list = engine.getVoices(locale).toList()
         withMain {
             voices.clear()
