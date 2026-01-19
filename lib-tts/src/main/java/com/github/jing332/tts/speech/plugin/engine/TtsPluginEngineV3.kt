@@ -18,13 +18,12 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 严谨版 V3：带控制台回显与 Polyfill
+ * 严谨版 V3：网络日志增强版
  */
 open class TtsPluginEngineV3(
     val context: Context, 
     var plugin: Plugin,
     protected val requestTimeout: Long,
-    // 🛠️ 新增：接收控制台对象，让日志能显示在 APP 里
     protected val console: Console = Console()
 ) {
     companion object {
@@ -48,8 +47,8 @@ open class TtsPluginEngineV3(
     interface JsBridge {
         fun onSuccess(result: Any?)
         fun onError(error: String)
-        fun log(msg: String)   // 🛠️ 新增日志接口
-        fun error(msg: String) // 🛠️ 新增错误接口
+        fun log(msg: String)
+        fun error(msg: String)
         fun fetch(url: String, options: String): String
         fun fileExist(path: String): Boolean
         fun readTxtFile(path: String): String
@@ -62,7 +61,7 @@ open class TtsPluginEngineV3(
         rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f
     ): InputStream? = withContext(Dispatchers.IO) {
         val quickJs = try { QuickJs.create() } catch (e: Exception) { 
-            console.error("V3 引擎初始化失败 (QuickJs.create): ${e.message}")
+            console.error("V3 初始化失败: ${e.message}")
             throw e 
         }
         val deferred = CompletableDeferred<Any?>()
@@ -71,12 +70,11 @@ open class TtsPluginEngineV3(
             quickJs.set("nativeBridge", JsBridge::class.java, object : JsBridge {
                 override fun onSuccess(result: Any?) { deferred.complete(result) }
                 override fun onError(error: String) { deferred.completeExceptionally(RuntimeException(error)) }
-                
-                // 🛠️ 连接到 UI 控制台
-                override fun log(msg: String) { console.info("[V3] $msg") }
-                override fun error(msg: String) { console.error("[V3] $msg") }
+                override fun log(msg: String) { console.info("[JS] $msg") }
+                override fun error(msg: String) { console.error("[JS] $msg") }
 
                 override fun fetch(url: String, options: String): String {
+                    // console.info("[Native] 发起请求: $url")
                     return try {
                         val opt = JSONObject(options)
                         val method = opt.optString("method", "GET")
@@ -92,8 +90,14 @@ open class TtsPluginEngineV3(
                             val contentType = opt.optJSONObject("headers")?.optString("Content-Type") ?: "application/json"
                             reqBuilder.post(bodyStr.toRequestBody(contentType.toMediaTypeOrNull()))
                         }
-                        client.newCall(reqBuilder.build()).execute().body?.string() ?: ""
-                    } catch (e: Exception) { "ERROR: ${e.message}" }
+                        val resp = client.newCall(reqBuilder.build()).execute()
+                        val body = resp.body?.string() ?: ""
+                        // console.info("[Native] 请求响应码: ${resp.code}, 长度: ${body.length}")
+                        body
+                    } catch (e: Exception) { 
+                        console.error("[Native] 请求异常: ${e.message}")
+                        "ERROR: ${e.message}" 
+                    }
                 }
 
                 override fun fileExist(path: String): Boolean = File(context.filesDir, path).exists()
@@ -104,7 +108,7 @@ open class TtsPluginEngineV3(
 
             val bvValue = (plugin.userVars["bv"] ?: "").replace("\"", "\\\"")
             
-            // 🛠️ 更新 Polyfill：将 console.log 转发给 nativeBridge
+            // 🛠️ 增强型 Polyfill
             quickJs.evaluate("""
                 const console = {
                     log: (m) => nativeBridge.log(String(m)),
@@ -122,14 +126,23 @@ open class TtsPluginEngineV3(
 
                 const http = {
                     post: (url, body, headers) => {
-                        const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'POST', body: body, headers: headers}));
+                        console.log("http.post -> " + url);
+                        // 确保 body 是字符串
+                        const bodyStr = (typeof body === 'object') ? JSON.stringify(body) : String(body);
+                        const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'POST', body: bodyStr, headers: headers}));
+                        
                         if (resStr.startsWith("ERROR:")) throw new Error(resStr);
+                        
                         return {
-                            json: () => JSON.parse(resStr),
+                            json: () => {
+                                try { return JSON.parse(resStr); }
+                                catch(e) { console.error("JSON解析失败"); return {}; }
+                            },
                             body: () => ({ string: () => resStr })
                         };
                     },
                     get: (url, headers) => {
+                        console.log("http.get -> " + url);
                         const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'GET', headers: headers}));
                         if (resStr.startsWith("ERROR:")) throw new Error(resStr);
                         return {
@@ -137,12 +150,6 @@ open class TtsPluginEngineV3(
                             body: () => ({ string: () => resStr })
                         };
                     }
-                };
-
-                const fetch = async (url, opt = {}) => {
-                    const res = nativeBridge.fetch(url, JSON.stringify(opt));
-                    if (res.startsWith("ERROR:")) throw new Error(res);
-                    return { text: async () => res, json: async () => JSON.parse(res) };
                 };
             """.trimIndent())
 
@@ -154,7 +161,10 @@ open class TtsPluginEngineV3(
                     try {
                         const res = $OBJ_PLUGIN_JS.$FUNC_GET_AUDIO("$text", "$locale", "$voice", $r, $v, $p);
                         nativeBridge.onSuccess(res instanceof Promise ? await res : res);
-                    } catch (e) { nativeBridge.onError(e.message); }
+                    } catch (e) { 
+                        console.error("JS执行错误: " + e.message);
+                        nativeBridge.onError(e.message); 
+                    }
                 })();
             """.trimIndent())
 
@@ -162,10 +172,8 @@ open class TtsPluginEngineV3(
             return@withContext handleResult(result)
 
         } catch (e: Exception) {
-            // 🛠️ 关键：将错误直接输出到屏幕控制台
-            console.error("V3 引擎执行异常: ${e.message}")
-            if (e.cause != null) console.error("原因: ${e.cause?.message}")
-            Log.e(TAG, "V3 Error", e)
+            console.error("V3 严重错误: ${e.message}")
+            e.printStackTrace()
             null
         } finally {
             quickJs.close()
@@ -173,18 +181,26 @@ open class TtsPluginEngineV3(
     }
 
     private fun handleResult(result: Any?): InputStream? {
-        if (result == null) return null
+        if (result == null) {
+            console.error("V3 返回了空结果 (null)")
+            return null
+        }
         val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
+        if (data.isEmpty()) {
+            console.error("V3 返回了空字符串")
+            return null
+        }
+        
         if (data.startsWith("http")) {
             return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { 
-                console.error("下载音频失败: ${e.message}")
+                console.error("下载音频流失败: ${e.message}")
                 null 
             }
         }
         return try { 
             ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT)) 
         } catch (e: Exception) { 
-            console.error("Base64 解码失败: ${e.message}")
+            console.error("Base64 解码异常，数据预览: ${data.take(20)}...")
             null 
         }
     }
