@@ -17,9 +17,6 @@ import java.io.File
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
-/**
- * 严谨版 V3：网络日志增强版
- */
 open class TtsPluginEngineV3(
     val context: Context, 
     var plugin: Plugin,
@@ -74,7 +71,6 @@ open class TtsPluginEngineV3(
                 override fun error(msg: String) { console.error("[JS] $msg") }
 
                 override fun fetch(url: String, options: String): String {
-                    // console.info("[Native] 发起请求: $url")
                     return try {
                         val opt = JSONObject(options)
                         val method = opt.optString("method", "GET")
@@ -91,13 +87,8 @@ open class TtsPluginEngineV3(
                             reqBuilder.post(bodyStr.toRequestBody(contentType.toMediaTypeOrNull()))
                         }
                         val resp = client.newCall(reqBuilder.build()).execute()
-                        val body = resp.body?.string() ?: ""
-                        // console.info("[Native] 请求响应码: ${resp.code}, 长度: ${body.length}")
-                        body
-                    } catch (e: Exception) { 
-                        console.error("[Native] 请求异常: ${e.message}")
-                        "ERROR: ${e.message}" 
-                    }
+                        resp.body?.string() ?: ""
+                    } catch (e: Exception) { "ERROR: ${e.message}" }
                 }
 
                 override fun fileExist(path: String): Boolean = File(context.filesDir, path).exists()
@@ -108,48 +99,51 @@ open class TtsPluginEngineV3(
 
             val bvValue = (plugin.userVars["bv"] ?: "").replace("\"", "\\\"")
             
-            // 🛠️ 增强型 Polyfill
+            // 🛠️ 关键修复：使用 var 定义 fetch，确保它在全局作用域生效
             quickJs.evaluate("""
-                const console = {
-                    log: (m) => nativeBridge.log(String(m)),
-                    error: (m) => nativeBridge.error(String(m))
+                var console = {
+                    log: function(m) { nativeBridge.log(String(m)); },
+                    error: function(m) { nativeBridge.error(String(m)); }
                 };
                 
-                const ttsrv = {
-                    fileExist: (p) => nativeBridge.fileExist(p),
-                    readTxtFile: (p) => nativeBridge.readTxtFile(p),
-                    writeTxtFile: (p, c) => nativeBridge.writeTxtFile(p, c),
+                var ttsrv = {
+                    fileExist: function(p) { return nativeBridge.fileExist(p); },
+                    readTxtFile: function(p) { return nativeBridge.readTxtFile(p); },
+                    writeTxtFile: function(p, c) { nativeBridge.writeTxtFile(p, c); },
                     tts: { data: {"bv": "$bvValue"} }
                 };
 
-                const Buffer = { from: (data, type) => data };
+                var Buffer = { from: function(data, type) { return data; } };
 
-                const http = {
-                    post: (url, body, headers) => {
-                        console.log("http.post -> " + url);
-                        // 确保 body 是字符串
-                        const bodyStr = (typeof body === 'object') ? JSON.stringify(body) : String(body);
-                        const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'POST', body: bodyStr, headers: headers}));
-                        
+                var http = {
+                    post: function(url, body, headers) {
+                        var bodyStr = (typeof body === 'object') ? JSON.stringify(body) : String(body);
+                        var resStr = nativeBridge.fetch(url, JSON.stringify({method: 'POST', body: bodyStr, headers: headers}));
                         if (resStr.startsWith("ERROR:")) throw new Error(resStr);
-                        
                         return {
-                            json: () => {
-                                try { return JSON.parse(resStr); }
-                                catch(e) { console.error("JSON解析失败"); return {}; }
-                            },
-                            body: () => ({ string: () => resStr })
+                            json: function() { return JSON.parse(resStr); },
+                            body: function() { return { string: function() { return resStr; } }; }
                         };
                     },
-                    get: (url, headers) => {
-                        console.log("http.get -> " + url);
-                        const resStr = nativeBridge.fetch(url, JSON.stringify({method: 'GET', headers: headers}));
+                    get: function(url, headers) {
+                        var resStr = nativeBridge.fetch(url, JSON.stringify({method: 'GET', headers: headers}));
                         if (resStr.startsWith("ERROR:")) throw new Error(resStr);
                         return {
-                            json: () => JSON.parse(resStr),
-                            body: () => ({ string: () => resStr })
+                            json: function() { return JSON.parse(resStr); },
+                            body: function() { return { string: function() { return resStr; } }; }
                         };
                     }
+                };
+
+                // 使用 var 确保 fetch 也是全局的
+                var fetch = async function(url, opt) {
+                    if (!opt) opt = {};
+                    var res = nativeBridge.fetch(url, JSON.stringify(opt));
+                    if (res.startsWith("ERROR:")) throw new Error(res);
+                    return { 
+                        text: async function() { return res; }, 
+                        json: async function() { return JSON.parse(res); } 
+                    };
                 };
             """.trimIndent())
 
@@ -162,7 +156,7 @@ open class TtsPluginEngineV3(
                         const res = $OBJ_PLUGIN_JS.$FUNC_GET_AUDIO("$text", "$locale", "$voice", $r, $v, $p);
                         nativeBridge.onSuccess(res instanceof Promise ? await res : res);
                     } catch (e) { 
-                        console.error("JS执行错误: " + e.message);
+                        console.error("JS Error: " + e.message);
                         nativeBridge.onError(e.message); 
                     }
                 })();
@@ -172,7 +166,7 @@ open class TtsPluginEngineV3(
             return@withContext handleResult(result)
 
         } catch (e: Exception) {
-            console.error("V3 严重错误: ${e.message}")
+            console.error("V3 Exec Error: ${e.message}")
             e.printStackTrace()
             null
         } finally {
@@ -181,27 +175,13 @@ open class TtsPluginEngineV3(
     }
 
     private fun handleResult(result: Any?): InputStream? {
-        if (result == null) {
-            console.error("V3 返回了空结果 (null)")
-            return null
-        }
+        if (result == null) return null
         val data = result.toString().replace(Regex("[\\s\\r\\n]"), "")
-        if (data.isEmpty()) {
-            console.error("V3 返回了空字符串")
-            return null
-        }
-        
         if (data.startsWith("http")) {
-            return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { 
-                console.error("下载音频流失败: ${e.message}")
-                null 
-            }
+            return try { client.newCall(Request.Builder().url(data).build()).execute().body?.byteStream() } catch (e: Exception) { null }
         }
         return try { 
             ByteArrayInputStream(Base64.decode(data, Base64.DEFAULT)) 
-        } catch (e: Exception) { 
-            console.error("Base64 解码异常，数据预览: ${data.take(20)}...")
-            null 
-        }
+        } catch (e: Exception) { null }
     }
 }
