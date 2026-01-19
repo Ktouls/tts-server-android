@@ -1,55 +1,53 @@
-package com.github.jing332.tts.speech.plugin
+package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
-import android.util.Log
 import com.github.jing332.database.entities.plugin.Plugin
-import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineV3
-import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
-import com.github.jing332.tts.util.AbstractCachedManager
+import java.util.Collections
 
-object TtsPluginEngineManager : AbstractCachedManager<String, TtsPluginUiEngineV2>(
-    timeout = 1000L * 60L * 10L, // 10 min
-    delay = 1000L * 60L * 1L, // 1 min
-) {
+/**
+ * 严谨版引擎管理器：支持 V2 (Rhino) 与 V3 (QuickJS) 实例管理
+ */
+object TtsPluginEngineManager {
+    // 使用线程安全的 Map 缓存引擎实例
+    private val mEngines = Collections.synchronizedMap(mutableMapOf<String, TtsPluginEngineV2>())
+    private val mEnginesV3 = Collections.synchronizedMap(mutableMapOf<String, TtsPluginEngineV3>())
+
     /**
-     * 获取 V2 引擎 (Rhino)
+     * 获取或创建 V2 (Rhino) 引擎实例
      */
-    fun get(context: Context, plugin: Plugin): TtsPluginUiEngineV2 {
-        // 修复：新建插件没有ID，防止 eval 崩溃导致无法保存
-        if (plugin.pluginId.isEmpty()) {
-            val engine = TtsPluginUiEngineV2(context, plugin)
-            try {
-                engine.eval()
-            } catch (e: Exception) {
-                // 吞掉错误：新建插件时可能因为缺少ID导致 eval 里的日志打印报错
-                // 我们捕获它，确保界面不会闪退，让用户能保存成功。
-                Log.w("TtsPluginEngineManager", "新建插件预加载验证跳过: ${e.message}")
-            }
-            return engine
-        }
-
-        return cache.get(plugin.pluginId) ?: run {
-            val engine = TtsPluginUiEngineV2(context, plugin)
-            engine.eval()
-            cache.put(plugin.pluginId, engine)
-            engine
+    fun get(context: Context, plugin: Plugin): TtsPluginEngineV2 {
+        val key = plugin.pluginId + plugin.code.hashCode()
+        return mEngines.getOrPut(key) {
+            TtsPluginEngineV2(context, plugin).apply { eval() }
         }
     }
 
-    private val v3CacheMap = mutableMapOf<String, TtsPluginEngineV3>()
-
     /**
-     * 获取 V3 引擎 (QuickJS)
+     * 🛠️ 新增：获取或创建 V3 (QuickJS) 引擎实例
+     * 严谨性：独立缓存，确保 V3 环境与 V2 互不干扰
      */
     fun getV3(context: Context, plugin: Plugin): TtsPluginEngineV3 {
-        if (plugin.pluginId.isEmpty()) {
-            return TtsPluginEngineV3(context, plugin)
+        // 使用代码哈希作为 Key，确保脚本更新时能即时重载引擎
+        val key = "V3_" + plugin.pluginId + plugin.code.hashCode()
+        return mEnginesV3.getOrPut(key) {
+            // V3 引擎在 Provider.onInit 中会被初始化
+            TtsPluginEngineV3(context, plugin)
         }
+    }
 
-        return v3CacheMap[plugin.pluginId] ?: run {
-            val engine = TtsPluginEngineV3(context, plugin)
-            v3CacheMap[plugin.pluginId] = engine
-            engine
-        }
+    /**
+     * 释放特定插件的所有引擎资源
+     */
+    fun remove(pluginId: String) {
+        mEngines.keys.removeAll { it.startsWith(pluginId) }
+        mEnginesV3.keys.removeAll { it.contains(pluginId) }
+    }
+
+    /**
+     * 清空所有引擎缓存
+     */
+    fun clear() {
+        mEngines.clear()
+        mEnginesV3.clear()
     }
 }
