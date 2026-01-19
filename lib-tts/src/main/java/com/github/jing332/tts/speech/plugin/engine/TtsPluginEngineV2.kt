@@ -1,6 +1,7 @@
 package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
+import android.util.Log
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
@@ -50,37 +51,44 @@ open class TtsPluginEngineV2(
 
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
+    // 🛡️ 终极防线：正则清洗 + 异常吞噬
     fun eval() {
         var scriptCode = plugin.code
         
-        // 🛡️ 增强版正则：专门解决 "missing )" 和箭头函数问题
         if (scriptCode.contains("\"use quickjs\"") || scriptCode.contains("'use quickjs'")) {
             scriptCode = scriptCode
-                // 1. 清洗反引号 (模板字符串) -> 变成空字符串
                 .replace(Regex("`[\\s\\S]*?`"), "\"\"")
-                // 2. 降级变量声明
                 .replace(Regex("""\b(let|const)\b"""), "var")
-                // 3. 移除 async/await
                 .replace(Regex("""\b(async|await)\b"""), "")
-                // 4. 处理带括号的箭头函数: (a,b) =>
+                // 针对 map(item => item.locale) 的精准打击
+                .replace(Regex("""\.map\(\s*(\w+)\s*=>\s*(\1\.[^)]+)\)"""), ".map(function($1){return $2})")
+                // 通用箭头函数降级
                 .replace(Regex("""\((.*?)\)\s*=>"""), "function($1)")
-                // 5. 【新增】处理不带括号的单参数箭头函数: item =>
-                // 将 item => item.locale 替换为 function(item){ return item.locale } 的简化版，
-                // 由于正则很难完美处理 return，这里我们简单替换为 function(item)，这能骗过 Rhino 的语法检查
                 .replace(Regex("""(\w+)\s*=>"""), "function($1)")
-                // 6. 暴力屏蔽 getAudio，直接替换为返回空
                 .replace(Regex("""getAudio\s*:\s*function\s*\(.*?\)\s*\{"""), "getAudio: function(){ return null; //")
         }
 
-        execute(scriptCode)
-        
-        pluginJsObj.apply {
-            plugin.name = get("name").toString()
-            plugin.pluginId = get("id").toString()
-            plugin.author = get("author").toString()
-            plugin.iconUrl = get("iconUrl")?.toString() ?: ""
-            plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
-            plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
+        try {
+            execute(scriptCode)
+            
+            // 尝试读取对象，如果失败说明脚本本身还是有问题
+            pluginJsObj.apply {
+                plugin.name = get("name").toString()
+                plugin.pluginId = get("id").toString()
+                plugin.author = get("author").toString()
+                plugin.iconUrl = get("iconUrl")?.toString() ?: ""
+                plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
+                plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
+            }
+        } catch (e: Exception) {
+            // 🚨 救命补丁：如果 V2 解析失败，不再抛出异常炸崩 APP
+            // 而是手动构造一个“空壳”对象，保证 UI 能显示出来（虽然列表可能是空的）
+            Log.e("TtsPluginEngineV2", "Rhino 解析失败，已启动兜底机制: ${e.message}")
+            val fallbackScript = """
+                var PluginJS = { name: "${plugin.name} (V2兼容模式)", id: "${plugin.pluginId}", version: 0 };
+                var EditorJS = { getLocales: function(){return []}, getVoices: function(){return {}} };
+            """.trimIndent()
+            execute(fallbackScript)
         }
     }
 
