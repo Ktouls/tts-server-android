@@ -44,10 +44,8 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
 
     @Suppress("UNCHECKED_CAST")
     fun service(): TextToSpeechProvider<TextToSpeechSource> {
-        // 修正：将 engine 赋值逻辑与 Provider 重构后的逻辑对齐
         return PluginTtsProvider(getApplication<Application>() as Context, engine.plugin).also {
-            // 注意：重构后的 Provider 内部通过 EngineManager 获取实例，
-            // 这里的 engine 赋值主要用于 UI 状态同步
+            // 这里不再手动给 it.engine 赋值，交给 Provider.onInit() 处理路由逻辑
         } as TextToSpeechProvider<TextToSpeechSource>
     }
 
@@ -57,11 +55,10 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
             if (plugin != null && engine.plugin.pluginId == plugin.pluginId) return
         }
 
-        // 修正：使用更新后的 TtsPluginEngineManager 路径及类型处理
         val context = getApplication<Application>() as Context
         val targetPlugin = plugin ?: getPluginFromDB(source.pluginId)
-        
-        // 严谨逻辑：确保从 Manager 获取的是具有 UI 渲染能力的 TtsPluginUiEngineV2
+
+        // 🛠️ 严谨逻辑：从 TtsPluginEngineManager 获取实例并进行安全类型校验
         val rawEngine = TtsPluginEngineManager.get(context, targetPlugin)
         engine = if (rawEngine is TtsPluginUiEngineV2) {
             rawEngine
@@ -129,6 +126,8 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         try {
             engine.onVoiceChanged(locale, voice)
         } catch (_: NoSuchMethodException) {
+        } catch (e: Exception) {
+            logger.error(e) { "更新自定义 UI 失败" }
         }
     }
 }
