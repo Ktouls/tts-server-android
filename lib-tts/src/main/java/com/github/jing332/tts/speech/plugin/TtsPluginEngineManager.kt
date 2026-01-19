@@ -9,29 +9,32 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 严谨版管理器：通过协程异步清理和 ConcurrentHashMap 彻底杜绝 UI 死锁（白屏）
+ * 严谨版工厂：负责分发外部注入的配置参数
  */
 object TtsPluginEngineManager {
     private const val TAG = "TtsPluginEngineManager"
-    
-    // 使用并发容器，确保多线程操作安全
     private val mEngines = ConcurrentHashMap<String, TtsPluginEngineV2>()
     private val mEnginesV3 = ConcurrentHashMap<String, TtsPluginEngineV3>()
-    
-    // 专用于后台管理任务的协程作用域
     private val managerScope = CoroutineScope(Dispatchers.IO)
 
-    fun get(context: Context, plugin: Plugin): TtsPluginEngineV2 {
+    /**
+     * 获取 V2 引擎：同步超时注入
+     */
+    fun get(context: Context, plugin: Plugin, timeout: Long): TtsPluginEngineV2 {
         val key = plugin.pluginId + plugin.code.hashCode()
         return mEngines.getOrPut(key) {
-            TtsPluginUiEngineV2(context, plugin).apply { eval() }
+            // 🛡️ 注入超时参数
+            TtsPluginUiEngineV2(context, plugin, timeout).apply { eval() }
         }
     }
 
-    fun getV3(context: Context, plugin: Plugin): TtsPluginEngineV3 {
+    /**
+     * 获取 V3 引擎：同步超时注入
+     */
+    fun getV3(context: Context, plugin: Plugin, timeout: Long): TtsPluginEngineV3 {
         val key = "V3_" + plugin.pluginId + plugin.code.hashCode()
-        return mEnginesV3.getOrPut(key) {
-            TtsPluginEngineV3(context, plugin)
+        return mEnginesV3.getOrPut(key) { 
+            TtsPluginEngineV3(context, plugin, timeout) 
         }
     }
 
@@ -46,19 +49,12 @@ object TtsPluginEngineManager {
         }
     }
 
-    /**
-     * 🛠️ 核心修复：点击菜单触发的清理逻辑必须完全脱离主线程
-     */
     fun clear() {
-        Log.i(TAG, "触发异步清理所有引擎缓存...")
         managerScope.launch {
             runCatching {
                 mEngines.clear()
                 mEnginesV3.clear()
-                Log.d(TAG, "后台引擎缓存清理完成")
-            }.onFailure { 
-                Log.e(TAG, "后台清理异常: ${it.message}") 
-            }
+            }.onFailure { Log.e(TAG, "后台清理异常: ${it.message}") }
         }
     }
 }
