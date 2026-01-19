@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import app.cash.quickjs.QuickJs
-import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.database.entities.plugin.Plugin
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -18,9 +17,13 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * 严谨版 V3：接入动态超时，强力清洗 Base64 解决转圈问题
+ * 严谨版 V3：注入式超时控制与 Base64 强力清洗
  */
-open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
+open class TtsPluginEngineV3(
+    val context: Context, 
+    var plugin: Plugin,
+    protected val requestTimeout: Long // 🛡️ 注入用户配置
+) {
     companion object {
         const val TAG = "TtsPluginEngineV3"
         const val OBJ_PLUGIN_JS = "PluginJS"
@@ -28,9 +31,8 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
         const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    // 🛡️ 严谨：对接 SysTtsConfig 并进行防御性限值
     private val configTimeoutMs: Long
-        get() = (SysTtsConfig.requestTimeout).coerceAtLeast(5000L)
+        get() = requestTimeout.coerceAtLeast(5000L)
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -116,7 +118,7 @@ open class TtsPluginEngineV3(val context: Context, var plugin: Plugin) {
                 })();
             """.trimIndent())
 
-            // 🛡️ 动态超时：配置时间 + 2秒冗余
+            // 🛡️ 严谨：配置时间 + 2秒冗余缓冲
             val result = withTimeout(configTimeoutMs + 2000L) { deferred.await() }
             return@withContext handleResult(result)
 
