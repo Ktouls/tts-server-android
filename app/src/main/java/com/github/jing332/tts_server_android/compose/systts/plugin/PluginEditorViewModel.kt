@@ -133,7 +133,7 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
             context = getApplication(), 
             plugin = tempPlugin, 
             requestTimeout = SysTtsConfig.requestTimeout.toLong(),
-            console = console // 🛠️ 关键：把控制台传给 V3
+            console = console
         )
         
         try {
@@ -143,9 +143,10 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
                 text = PluginConfig.textParam.value,
                 locale = pluginSource.locale,
                 voice = pluginSource.voice,
-                rate = 50f, 
-                volume = 50f,
-                pitch = 50f
+                // 🛠️ 核心修复：从 50f 改为 1f (1倍速)，避免服务器拒绝
+                rate = 1f, 
+                volume = 1f,
+                pitch = 1f
             )
 
             if (stream == null) {
