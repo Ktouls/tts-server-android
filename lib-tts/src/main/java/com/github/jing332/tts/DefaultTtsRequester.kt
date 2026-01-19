@@ -31,7 +31,7 @@ class DefaultTtsRequester(val context: SynthesizerContext) : ITtsRequester {
 
         return try {
             // 3. 参数同步：创建 Source 副本以应用动态参数
-            // 修复点：使用 .copy() 处理不可变对象，且直接传递 Float 类型
+            // 修复点：使用 .copy() 处理不可变对象，且直接传递 Float 类型 (无需 *50 或转 Int)
             val finalSource = if (source is PluginTtsSource) {
                 source.copy(
                     speed = tts.audioParams.speed,
@@ -42,7 +42,7 @@ class DefaultTtsRequester(val context: SynthesizerContext) : ITtsRequester {
                 source
             }
 
-            // 4. 执行请求：使用标准的 getStream 接口
+            // 4. 执行请求：使用标准的 getStream 接口，传入更新后的 finalSource
             val stream = try {
                 engine.getStream(params, finalSource)
             } catch (e: TimeoutCancellationException) {
