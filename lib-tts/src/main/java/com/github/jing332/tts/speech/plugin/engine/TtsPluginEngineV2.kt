@@ -1,7 +1,7 @@
 package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
-import android.util.Log
+import com.drake.net.Net
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
@@ -9,10 +9,12 @@ import com.github.jing332.script.runtime.NativeResponse
 import com.github.jing332.script.runtime.console.Console
 import com.github.jing332.script.simple.CompatScriptRuntime
 import com.github.jing332.script.source.toScriptSource
+import com.github.jing332.tts.speech.EmptyInputStream
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.mozilla.javascript.ScriptableObject
 import org.mozilla.javascript.Undefined
 import org.mozilla.javascript.typedarrays.NativeArrayBuffer
@@ -21,27 +23,15 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
-/**
- * Rhino (V2) 引擎：负责旧版插件执行及新版插件的元数据预解析
- * 严谨性：通过构造函数注入超时参数，彻底解决模块间依赖导致的编译失败问题
- */
-open class TtsPluginEngineV2(
-    val context: Context, 
-    var plugin: Plugin,
-    protected val requestTimeout: Long // 🛡️ 注入外部参数，解耦 app 模块配置类
-) {
+// 保持 open class 不变，供 UI 引擎继承
+open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     companion object {
         const val OBJ_PLUGIN_JS = "PluginJS"
         const val FUNC_GET_AUDIO = "getAudio"
         const val FUNC_GET_AUDIO_V2 = "getAudioV2"
         const val FUNC_ON_LOAD = "onLoad"
         const val FUNC_ON_STOP = "onStop"
-        const val TAG = "TtsPluginEngineV2"
     }
-
-    // 🛡️ 防御性设定：确保超时时间不低于 5s
-    protected val configTimeout: Long
-        get() = requestTimeout.coerceAtLeast(5000L)
 
     var console: Console
         get() = engine.runtime.console
@@ -61,62 +51,43 @@ open class TtsPluginEngineV2(
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
     /**
-     * 执行脚本评估，用于提取插件名称、ID 等元数据
+     * 关键修改：eval()
+     * 在这里对 V3 插件代码进行“降级清洗”，防止 Rhino 崩溃导致白屏
      */
     fun eval() {
-        // 🛠️ 严谨拦截：如果是 V3 脚本（含暗号），严禁 Rhino 运行代码，直接转入正则提取
-        if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
-            extractMetadataStrictly()
-            return
-        }
-
-        try {
-            execute(plugin.code)
-            pluginJsObj.apply {
-                plugin.name = get("name")?.toString() ?: ""
-                plugin.pluginId = get("id")?.toString() ?: ""
-                plugin.author = get("author")?.toString() ?: ""
-                plugin.iconUrl = get("iconUrl")?.toString() ?: ""
-                plugin.defVars = try { 
-                    val vars = get("vars")
-                    if (vars is Map<*, *>) vars as Map<String, Map<String, String>> else emptyMap()
-                } catch (_: Exception) { emptyMap() }
-                plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Rhino 引擎解析失败，尝试执行兜底正则提取: ${e.message}")
-            extractMetadataStrictly()
-        }
-    }
-
-    /**
-     * 🛠️ 增强版正则提取逻辑
-     */
-    private fun extractMetadataStrictly() {
-        val code = plugin.code
-        val startIdx = code.indexOf(OBJ_PLUGIN_JS).coerceAtLeast(0)
-        val searchScope = code.substring(startIdx, (startIdx + 1000).coerceAtMost(code.length))
-
-        fun findValue(key: String): String? {
-            val pattern = """['"]?$key['"]?\s*[:=]\s*['"](.*?)['"]""".toRegex()
-            return pattern.find(searchScope)?.groupValues?.get(1)
-        }
-
-        plugin.name = findValue("name") ?: plugin.name.ifEmpty { "未命名 V3" }
-        plugin.pluginId = findValue("id") ?: plugin.pluginId.ifEmpty { "v3_default_id" }
-        plugin.author = findValue("author") ?: "anonymous"
-        plugin.iconUrl = findValue("iconUrl") ?: ""
+        var scriptCode = plugin.code
         
-        // 强制重置变量配置，消除 UI 错误提示
-        plugin.defVars = emptyMap()
+        // 🛡️ 注入补丁：如果检测到是 V3 (QuickJS) 插件，进行语法清洗
+        if (scriptCode.contains("\"use quickjs\"") || scriptCode.contains("'use quickjs'")) {
+            scriptCode = scriptCode
+                // 1. 清洗反引号 (Rhino 不支持模板字符串) -> 解决白屏核心
+                .replace(Regex("`[\\s\\S]*?`"), "\"\"")
+                // 2. 降级变量声明
+                .replace(Regex("""\b(let|const)\b"""), "var")
+                // 3. 移除异步关键字
+                .replace(Regex("""\b(async|await)\b"""), "")
+                // 4. 清空 getAudio 函数体 (防止复杂语法报错)
+                .replace(Regex("""getAudio\s*:\s*(function)?\s*\(.*?\)\s*(=>)?\s*\{([\s\S]*?)\}"""), "getAudio: function(){}")
+                // 5. 简单的箭头函数降级
+                .replace(Regex("""\((.*?)\)\s*=>"""), "function($1)")
+        }
+
+        // 执行处理后的代码
+        execute(scriptCode)
+        
+        pluginJsObj.apply {
+            plugin.name = get("name").toString()
+            plugin.pluginId = get("id").toString()
+            plugin.author = get("author").toString()
+            plugin.iconUrl = get("iconUrl")?.toString() ?: ""
+            plugin.defVars = try { get("vars") as Map<String, Map<String, String>> } catch (_: Exception) { emptyMap() }
+            plugin.version = try { org.mozilla.javascript.Context.toNumber(get("version")).toInt() } catch (e: Exception) { -1 }
+        }
     }
 
     fun onLoad(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_LOAD) }.getOrNull()
     fun onStop(): Any? = runCatching { engine.invokeMethod(pluginJsObj, FUNC_ON_STOP) }.getOrNull()
 
-    /**
-     * 处理音频结果，支持多种返回类型及 URL 自动下载
-     */
     private fun handleAudioResult(result: Any?): InputStream? {
         if (result == null || result is Undefined) return null
         return when (result) {
@@ -131,17 +102,16 @@ open class TtsPluginEngineV2(
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
-                    // 🛡️ 注入：同步用户设置的动态超时
                     val client = OkHttpClient.Builder()
-                        .connectTimeout(configTimeout, TimeUnit.MILLISECONDS)
-                        .readTimeout(configTimeout, TimeUnit.MILLISECONDS)
+                        .connectTimeout(300, TimeUnit.SECONDS)
+                        .readTimeout(300, TimeUnit.SECONDS)
                         .build()
                     val resp = client.newCall(Request.Builder().url(str).build()).execute()
-                    if (!resp.isSuccessful) throw RuntimeException("Audio Download Failed: ${resp.code}")
+                    if (!resp.isSuccessful) throw RuntimeException("URL Fetch Error: ${resp.code}")
                     resp.body?.byteStream()
-                } else throw IllegalStateException("Unexpected String Result: $str")
+                } else throw IllegalStateException(str)
             }
-            else -> throw IllegalArgumentException("Unsupported Result Type: ${result.javaClass.name}")
+            else -> throw IllegalArgumentException("Unsupported return type: ${result.javaClass.name}")
         }
     }
 
@@ -159,6 +129,7 @@ open class TtsPluginEngineV2(
 
     suspend fun getAudio(text: String, locale: String, voice: String, rate: Float = 1f, volume: Float = 1f, pitch: Float = 1f): InputStream {
         val r = (rate * 50f).toInt(); val v = (volume * 50f).toInt(); val p = (pitch * 50f).toInt()
+        
         val result = try {
             runInterruptible {
                 engine.invokeMethod(pluginJsObj, FUNC_GET_AUDIO, text, locale, voice, r, v, p)
@@ -166,6 +137,6 @@ open class TtsPluginEngineV2(
         } catch (_: NoSuchMethodException) {
             return getAudioV2(mapOf("text" to text, "locale" to locale, "voice" to voice, "rate" to r, "speed" to r, "volume" to v, "pitch" to p))
         }
-        return handleAudioResult(result) ?: throw RuntimeException("Synthesis result is empty")
+        return handleAudioResult(result) ?: throw RuntimeException("Synthesis Result is Empty")
     }
 }
