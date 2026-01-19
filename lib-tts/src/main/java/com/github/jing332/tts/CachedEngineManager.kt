@@ -20,18 +20,25 @@ object CachedEngineManager :
         return super.onCacheRemove(key, value)
     }
 
-    fun getEngine(context: Context, source: TextToSpeechSource): TextToSpeechProvider<TextToSpeechSource>? {
+    /**
+     * 🛡️ 注入式适配：接收外部传入的 requestTimeout
+     */
+    fun getEngine(
+        context: Context, 
+        source: TextToSpeechSource, 
+        requestTimeout: Long // 🛡️ 注入外部超时配置
+    ): TextToSpeechProvider<TextToSpeechSource>? {
         val key = source.getKey() + ";" + source.javaClass.simpleName
 
         val cachedEngine = cache[key]
         return if (cachedEngine == null) {
-            val engine = SpeechServiceFactory.createEngine(context, source) ?: return null
+            // 🛡️ 转发给工厂类
+            val engine = SpeechServiceFactory.createEngine(context, source, requestTimeout) ?: return null
             cache.put(key, engine)
             engine
         } else {
             cachedEngine
         }
-
     }
 
     fun expireAll() {
