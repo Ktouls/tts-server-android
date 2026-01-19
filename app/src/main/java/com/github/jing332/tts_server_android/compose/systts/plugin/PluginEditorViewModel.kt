@@ -1,7 +1,6 @@
 package com.github.jing332.tts_server_android.compose.systts.plugin
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -10,8 +9,8 @@ import com.github.jing332.common.utils.sizeToReadable
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.runtime.console.Console
-import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineV2
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineV3
+import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
 import com.github.jing332.tts_server_android.conf.PluginConfig
 import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import kotlinx.coroutines.Dispatchers
@@ -57,9 +56,10 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         """.trimIndent()
     }
 
-    private var mEngine: TtsPluginEngineV2? = null
+    // 🛠️ 修正1: 类型改为 UI 子类 TtsPluginUiEngineV2
+    private var mEngine: TtsPluginUiEngineV2? = null
     
-    val engine: TtsPluginEngineV2
+    val engine: TtsPluginUiEngineV2
         get() = mEngine ?: throw IllegalStateException("Engine is null")
         
     val pluginSource: PluginTtsSource
@@ -88,12 +88,11 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun updatePlugin(plugin: Plugin) {
-        // 注入系统超时配置
         val timeout = SysTtsConfig.requestTimeout
         
-        // 🛠️ 这里的构造函数已经适配了之前的修改 (3个参数)
+        // 🛠️ 修正2: 实例化 TtsPluginUiEngineV2，并确保 timeout 转为 Long
         mEngine = mEngine?.also { it.plugin = plugin }
-            ?: TtsPluginEngineV2(getApplication(), plugin, timeout).also { it.console = console }
+            ?: TtsPluginUiEngineV2(getApplication(), plugin, timeout.toLong()).also { it.console = console }
             
         try {
             mEngine?.eval()
@@ -113,11 +112,8 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         
         mDebugJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. 更新代码 (触发 V2 引擎解析 EditorJS)
                 updateCode(code)
-                val currentPlugin = engine.plugin
-                
-                // 2. 智能分流
+                // 智能分流
                 val isV3 = code.contains("\"use quickjs\"") || code.contains("'use quickjs'")
                 
                 if (isV3) {
@@ -143,9 +139,9 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    // ========== V2 调试逻辑 ==========
     private suspend fun debugV2() {
         kotlin.runCatching {
+            // 这里现在不会报错了，因为 engine 是 TtsPluginUiEngineV2
             val sampleRate = engine.getSampleRate(pluginSource.locale, pluginSource.voice)
             console.debug("采样率: $sampleRate")
         }.onFailure { writeErrorLog(it) }
@@ -167,24 +163,18 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         }.onFailure { writeErrorLog(it) }
     }
 
-    // ========== V3 调试逻辑 (关键修正) ==========
     private suspend fun debugV3(code: String) {
-        // 1. 创建临时 Plugin 对象，载入当前编辑器的代码
         val tempPlugin = plugin.copy(code = code)
         
-        // 🛠️ 修正1：正确调用构造函数 (Context, Plugin, Timeout)
         val v3Engine = TtsPluginEngineV3(
             context = getApplication(), 
             plugin = tempPlugin, 
-            requestTimeout = SysTtsConfig.requestTimeout
+            requestTimeout = SysTtsConfig.requestTimeout.toLong() // 确保转 Long
         )
         
         try {
-            // 注意：V3 引擎在初始化时会自动加载 plugin.code，不需要手动 eval()
-            
             console.debug("插件ID: ${tempPlugin.pluginId}")
             
-            // 🛠️ 修正2：参数类型修正 Int -> Float (50 -> 50f)
             val stream = v3Engine.getAudio(
                 text = PluginConfig.textParam.value,
                 locale = pluginSource.locale,
@@ -215,8 +205,8 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
             console.error("V3 调试出错: ${e.message}")
             e.stackTrace.take(3).forEach { console.error("\t at $it") }
         } finally {
-            // 🛠️ 修正3：调用 onDestroy() 释放资源
-            runCatching { v3Engine.onDestroy() }
+            // 🛠️ 修正3: 改为 destroy()
+            runCatching { v3Engine.destroy() }
         }
     }
 
