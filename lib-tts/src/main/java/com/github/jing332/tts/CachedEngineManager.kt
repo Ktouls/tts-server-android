@@ -6,6 +6,9 @@ import com.github.jing332.tts.speech.TextToSpeechProvider
 import com.github.jing332.tts.util.AbstractCachedManager
 import io.github.oshai.kotlinlogging.KotlinLogging
 
+/**
+ * 引擎缓存管理器：适配动态超时注入
+ */
 object CachedEngineManager :
     AbstractCachedManager<String, TextToSpeechProvider<TextToSpeechSource>>(
         timeout = 1000L * 60L * 10L, // 10 min
@@ -21,7 +24,7 @@ object CachedEngineManager :
     }
 
     /**
-     * 🛡️ 注入式适配：接收外部传入的 requestTimeout
+     * 获取引擎：增加 requestTimeout 参数注入
      */
     fun getEngine(
         context: Context, 
@@ -32,7 +35,7 @@ object CachedEngineManager :
 
         val cachedEngine = cache[key]
         return if (cachedEngine == null) {
-            // 🛡️ 转发给工厂类
+            // 🛡️ 转发参数给工厂类，确保超时设置下沉
             val engine = SpeechServiceFactory.createEngine(context, source, requestTimeout) ?: return null
             cache.put(key, engine)
             engine
