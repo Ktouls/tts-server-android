@@ -20,7 +20,8 @@ import com.github.jing332.tts.speech.plugin.PluginTtsProvider
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineManager
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginUiEngineV2
 import com.github.jing332.tts_server_android.JsConsoleManager
-import com.github.jing332.tts_server_android.conf.SysTtsConfig // 🛡️ 只有在 App 模块中才能 import 
+// 🛡️ 这里是 app 模块，import SysTtsConfig 是合法的，不会报错
+import com.github.jing332.tts_server_android.conf.SysTtsConfig 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,7 +46,8 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
 
     @Suppress("UNCHECKED_CAST")
     fun service(): TextToSpeechProvider<TextToSpeechSource> {
-        return PluginTtsProvider(getApplication<Application>() as Context, engine.plugin) as TextToSpeechProvider<TextToSpeechSource>
+        val timeout = SysTtsConfig.requestTimeout // 🛡️ 从配置中读取
+        return PluginTtsProvider(getApplication<Application>() as Context, engine.plugin, timeout) as TextToSpeechProvider<TextToSpeechSource>
     }
 
     private fun initEngine(plugin: Plugin?, source: PluginTtsSource) {
@@ -57,7 +59,7 @@ class PluginTtsViewModel(app: Application) : AndroidViewModel(app) {
         val context = getApplication<Application>() as Context
         val targetPlugin = plugin ?: getPluginFromDB(source.pluginId)
 
-        // 🛡️ 最优解：由 ViewModel 读取配置并注入给底层 Manager
+        // 🛡️ 最优解：由 ViewModel 读取配置并注入到底层 Manager
         val timeout = SysTtsConfig.requestTimeout
         val rawEngine = TtsPluginEngineManager.get(context, targetPlugin, timeout)
         
