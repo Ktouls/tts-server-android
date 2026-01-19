@@ -6,11 +6,15 @@ import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.tts.speech.EngineState
 import com.github.jing332.tts.speech.TextToSpeechProvider
+import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineManager
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineV2
 import com.github.jing332.tts.speech.plugin.engine.TtsPluginEngineV3
 import com.github.jing332.tts.synthesizer.SystemParams
 import java.io.InputStream
 
+/**
+ * 路由分发器：负责根据脚本暗号选择 Rhino (V2) 或 QuickJS (V3) 引擎
+ */
 open class PluginTtsProvider(
     val context: Context,
     val plugin: Plugin,
@@ -23,11 +27,6 @@ open class PluginTtsProvider(
     private var mEngine: TtsPluginEngineV2? = null
     private var mEngineV3: TtsPluginEngineV3? = null
 
-    // 给 UI 层调用的引用
-    var engine: TtsPluginEngineV2?
-        get() = mEngine
-        set(value) { mEngine = value }
-
     override var state: EngineState = EngineState.Uninitialized()
 
     override suspend fun getStream(params: SystemParams, source: PluginTtsSource): InputStream {
@@ -36,11 +35,11 @@ open class PluginTtsProvider(
         val pitch = if (source.pitch == 0f) params.pitch else source.pitch
 
         return if (mEngineV3 != null) {
-            // 走 V3 引擎
+            // V3 (QuickJS) 引擎执行逻辑
             mEngineV3!!.getAudio(params.text, source.locale, source.voice, speed, volume, pitch)
                 ?: throw IllegalStateException("QuickJS Engine returned null")
         } else {
-            // 走 V2 引擎 (Rhino)
+            // V2 (Rhino) 引擎执行逻辑
             mEngine?.source = source
             mEngine?.getAudio(params.text, source.locale, source.voice, speed, volume, pitch)
                 ?: throw IllegalStateException("V2 Engine not initialized")
@@ -50,7 +49,7 @@ open class PluginTtsProvider(
     override suspend fun onInit() {
         state = EngineState.Initializing
 
-        // 🛡️ 严谨判定：仅识别显式暗号。严禁基于 let/async 等关键字猜测，防止误判旧插件。
+        // 严谨判定：仅识别显式暗号。严禁基于 let/async 等关键字猜测，防止误判旧插件
         val isQuickJs = plugin.code.contains("\"use quickjs\"", ignoreCase = true)
 
         if (isQuickJs) {
@@ -58,7 +57,6 @@ open class PluginTtsProvider(
             mEngineV3 = TtsPluginEngineManager.getV3(context, plugin)
         } else {
             Log.i(TAG, "默认启用 Rhino (V2): ${plugin.name}")
-            // 此处不再加 try-catch 救场，防止出错后乱跳到 V3 报 ttsrv 错误
             mEngine = TtsPluginEngineManager.get(context, plugin)
         }
 
