@@ -2,7 +2,7 @@ package com.github.jing332.tts.speech.plugin.engine
 
 import android.content.Context
 import android.util.Log
-import com.github.jing332.conf.SysTtsConfig
+import com.github.jing332.tts_server_android.conf.SysTtsConfig
 import com.github.jing332.database.entities.plugin.Plugin
 import com.github.jing332.database.entities.systts.source.PluginTtsSource
 import com.github.jing332.script.engine.RhinoScriptEngine
@@ -23,7 +23,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 /**
- * Rhino (V2) 引擎：已接入 SysTtsConfig 动态超时
+ * Rhino (V2) 引擎：负责旧版插件执行及新版插件的元数据预解析
  */
 open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
     companion object {
@@ -34,10 +34,6 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
         const val FUNC_ON_STOP = "onStop"
         const val TAG = "TtsPluginEngineV2"
     }
-
-    // 🛠️ 动态获取超时：将秒转换为毫秒，并确保最小不低于 5s
-    protected val configTimeout: Long
-        get() = SysTtsConfig.requestTimeout.coerceAtLeast(5000L)
 
     var console: Console
         get() = engine.runtime.console
@@ -56,6 +52,9 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
 
     open protected fun execute(script: String): Any? = engine.execute(script.toScriptSource(sourceName = plugin.pluginId))
 
+    /**
+     * 执行脚本评估，用于提取插件名称、ID 等元数据
+     */
     fun eval() {
         if (plugin.code.contains("\"use quickjs\"", ignoreCase = true)) {
             extractMetadataStrictly()
@@ -115,10 +114,11 @@ open class TtsPluginEngineV2(val context: Context, var plugin: Plugin) {
             is CharSequence -> {
                 val str = result.toString()
                 if (str.startsWith("http")) {
-                    // 🛠️ 修正：使用动态超时配置
+                    // 🛡️ 严谨：读取全局超时设置
+                    val timeout = (SysTtsConfig.requestTimeout).coerceAtLeast(5000L)
                     val client = OkHttpClient.Builder()
-                        .connectTimeout(configTimeout, TimeUnit.MILLISECONDS)
-                        .readTimeout(configTimeout, TimeUnit.MILLISECONDS)
+                        .connectTimeout(timeout, TimeUnit.MILLISECONDS)
+                        .readTimeout(timeout, TimeUnit.MILLISECONDS)
                         .build()
                     val resp = client.newCall(Request.Builder().url(str).build()).execute()
                     if (!resp.isSuccessful) throw RuntimeException("Audio Download Failed: ${resp.code}")
