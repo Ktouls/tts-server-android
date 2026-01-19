@@ -89,7 +89,6 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
     fun updatePlugin(plugin: Plugin) {
         val timeout = SysTtsConfig.requestTimeout
         
-        // 实例化 TtsPluginUiEngineV2 (使用 Long 类型的 timeout)
         mEngine = mEngine?.also { it.plugin = plugin }
             ?: TtsPluginUiEngineV2(getApplication(), plugin, timeout.toLong()).also { it.console = console }
             
@@ -202,10 +201,8 @@ class PluginEditorViewModel(application: Application) : AndroidViewModel(applica
         } catch (e: Exception) {
             console.error("V3 调试出错: ${e.message}")
             e.stackTrace.take(3).forEach { console.error("\t at $it") }
-        } finally {
-            // 🛠️ 关键修正：改用 onStop()，这是本项目统一的销毁方法名
-            runCatching { v3Engine.onStop() }
-        }
+        } 
+        // 🛠️ 关键修正：彻底移除 finally 块，V3 引擎会自动管理生命周期
     }
 
     private fun writeErrorLog(t: Throwable) {
