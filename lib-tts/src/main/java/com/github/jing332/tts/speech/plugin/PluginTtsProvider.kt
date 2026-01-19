@@ -13,11 +13,12 @@ import com.github.jing332.tts.synthesizer.SystemParams
 import java.io.InputStream
 
 /**
- * 路由分发器：负责根据脚本暗号选择 Rhino (V2) 或 QuickJS (V3) 引擎
+ * 路由分发器：支持注入式超时控制
  */
 open class PluginTtsProvider(
     val context: Context,
     val plugin: Plugin,
+    private val requestTimeout: Long // 🛡️ 通过构造函数注入超时，解耦模块依赖
 ) : TextToSpeechProvider<PluginTtsSource>() {
 
     companion object {
@@ -35,11 +36,9 @@ open class PluginTtsProvider(
         val pitch = if (source.pitch == 0f) params.pitch else source.pitch
 
         return if (mEngineV3 != null) {
-            // V3 (QuickJS) 引擎执行逻辑
             mEngineV3!!.getAudio(params.text, source.locale, source.voice, speed, volume, pitch)
                 ?: throw IllegalStateException("QuickJS Engine returned null")
         } else {
-            // V2 (Rhino) 引擎执行逻辑
             mEngine?.source = source
             mEngine?.getAudio(params.text, source.locale, source.voice, speed, volume, pitch)
                 ?: throw IllegalStateException("V2 Engine not initialized")
@@ -49,15 +48,16 @@ open class PluginTtsProvider(
     override suspend fun onInit() {
         state = EngineState.Initializing
 
-        // 严谨判定：仅识别显式暗号。严禁基于 let/async 等关键字猜测，防止误判旧插件
         val isQuickJs = plugin.code.contains("\"use quickjs\"", ignoreCase = true)
 
         if (isQuickJs) {
             Log.i(TAG, "检测到强制指令，启用 QuickJS (V3): ${plugin.name}")
-            mEngineV3 = TtsPluginEngineManager.getV3(context, plugin)
+            // 🛡️ 将注入的超时参数转发给管理器
+            mEngineV3 = TtsPluginEngineManager.getV3(context, plugin, requestTimeout)
         } else {
             Log.i(TAG, "默认启用 Rhino (V2): ${plugin.name}")
-            mEngine = TtsPluginEngineManager.get(context, plugin)
+            // 🛡️ 将注入的超时参数转发给管理器
+            mEngine = TtsPluginEngineManager.get(context, plugin, requestTimeout)
         }
 
         state = EngineState.Initialized
