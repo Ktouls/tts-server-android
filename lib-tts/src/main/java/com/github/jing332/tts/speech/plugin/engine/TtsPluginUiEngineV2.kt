@@ -19,10 +19,20 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
         const val TAG = "TtsPluginUiEngineV2"
     }
 
+    /**
+     * 🛠️ 修正：增加防御性初始化检测
+     */
     private val editUiJsObject: ScriptableObject by lazy {
         try {
+            val obj = engine.get(OBJ_UI_JS)
+            // 🛡️ 防御性检查：如果是 V3 插件，eval() 时没有执行脚本，此处 OBJ_UI_JS 必然为空
+            if (obj == null || obj is org.mozilla.javascript.Undefined) {
+                Log.d(TAG, "检测到 EditorJS 未初始化，正在执行净化脚本...")
+                execute(plugin.code)
+            }
             (engine.get(OBJ_UI_JS) as? ScriptableObject) ?: org.mozilla.javascript.NativeObject()
         } catch (e: Exception) {
+            Log.e(TAG, "初始化 EditorJS 失败: ${e.message}")
             org.mozilla.javascript.NativeObject()
         }
     }
@@ -61,13 +71,12 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
                     .replace(Regex("""\b(let|const)\b"""), "var")
                     .replace(Regex("""\b(async|await)\b"""), "")
                     // 4. 🛡️ 箭头函数净化：针对 getLocales 和 getVoices 中的常用模式进行转换
-                    // 转换 (item) => item.locale 为 function(item){ return item.locale }
-                    .replace(Regex("""\.map\s*\(\s*([a-zA-Z0-9_$]+)\s*=>\s*([^)]+)\)"""), ".map(function($1){return $2})")
+                    .replace(Regex("""\.map\s*\(\s*([a-zA-Z0-9_${'$'}]+)\s*=>\s*([^)]+)\)"""), ".map(function($1){return $2})")
                     .replace(Regex("""\.reduce\s*\(\s*\(([^)]+)\)\s*=>\s*\{"""), ".reduce(function($1){")
 
                 finalScript = polyfill + "\n" + finalScript
                 
-                // 🛠️ 调试日志：分段打印净化后的脚本（防止长日志被截断），供你检查净化结果
+                // 🛠️ 调试日志：分段打印净化后的脚本
                 finalScript.chunked(2000).forEach { Log.d(TAG, "Cleaned Script: $it") }
 
             } catch (e: Exception) {
@@ -78,7 +87,7 @@ class TtsPluginUiEngineV2(context: Context, plugin: Plugin) : TtsPluginEngineV2(
         return try {
             super.execute(PackageImporter.default + finalScript)
         } catch (e: Exception) {
-            Log.e(TAG, "Rhino 解析净化脚本失败，列表可能空白: ${e.message}")
+            Log.e(TAG, "Rhino 解析净化脚本失败: ${e.message}")
             null
         }
     }
